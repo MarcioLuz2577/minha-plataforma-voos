@@ -155,11 +155,10 @@ def buscar_duffel(dep_iata, arr_iata, data_obj):
     }]
     passengers = [{"type": "adult"} for _ in range(int(num_pax))]
 
+    # Ajustado conforme SDK oficial recente
     offer_request = (
         duffel.offer_requests.create()
-        .single_step()
-        .slices(slices)
-        .passengers(passengers)
+        .requests(slices=slices, passengers=passengers, cabin_class="economy")
         .execute()
     )
 
@@ -172,7 +171,7 @@ def buscar_duffel(dep_iata, arr_iata, data_obj):
     msg = (
         "OK"
         if res_list
-        else "Chave em Modo Teste (Sandbox) restringe rotas domésticas BR."
+        else "Sem voos retornados (Modo Sandbox de teste restringe rotas BR)."
     )
     return res_list, msg
   except Exception as e:
@@ -350,7 +349,6 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
 
             preco_total = opt_ida.get("price", 0) + opt_volta.get("price", 0)
 
-            # CORREÇÃO DA PALAVRA "PARTIDA"
             tag_comb = (
                 "🏆 MELHOR PARTIDA COMBINADA"
                 if i == 0
