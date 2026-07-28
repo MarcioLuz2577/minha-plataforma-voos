@@ -1,5 +1,7 @@
 import datetime
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from serpapi import GoogleSearch
 import streamlit as st
 
@@ -142,7 +144,7 @@ def buscar_serpapi(dep_iata, arr_iata, data_obj):
     return []
 
 
-# --- BUSCA 2: DUFFEL API (VIA HTTP REST NATIVO COM VERSÃO V2) ---
+# --- BUSCA 2: DUFFEL API (HTTP REST COM RETRY E TIMEOUT EXPANDIDO) ---
 def buscar_duffel(dep_iata, arr_iata, data_obj):
   if not DUFFEL_TOKEN:
     return [], "Chave DUFFEL_TOKEN não configurada."
@@ -165,10 +167,18 @@ def buscar_duffel(dep_iata, arr_iata, data_obj):
         }
     }
 
-    res = requests.post(url, json=payload, headers=headers, timeout=10)
+    # Sessão HTTP com mecanismo de retry automático
+    session = requests.Session()
+    retries = Retry(
+        total=2, backoff_factor=1, status_forcelist=[500, 502, 503, 504]
+    )
+    session.mount("https://", HTTPAdapter(max_retries=retries))
+
+    # Aumentado o timeout para 30 segundos
+    res = session.post(url, json=payload, headers=headers, timeout=30)
     data = res.json()
 
-    if res.status_code == 201 or res.status_code == 200:
+    if res.status_code in (200, 201):
       offers = data.get("data", {}).get("offers", [])
       msg = (
           "OK"
@@ -179,6 +189,8 @@ def buscar_duffel(dep_iata, arr_iata, data_obj):
     else:
       err_msg = data.get("errors", [{}])[0].get("message", "Erro desconhecido")
       return [], f"Detalhe Duffel: {err_msg}"
+  except requests.exceptions.Timeout:
+    return [], "Detalhe Duffel: Tempo limite de resposta excedido (Timeout)."
   except Exception as e:
     return [], f"Detalhe Duffel: {e}"
 
