@@ -80,7 +80,7 @@ with col1:
   origem_sel = st.selectbox(
       "🛫 Origem",
       options=lista_opcoes_aeroportos,
-      index=1,  # GRU por padrão
+      index=1,
   )
   origem_iata = AEROPORTOS[origem_sel]
 
@@ -88,7 +88,7 @@ with col2:
   destino_sel = st.selectbox(
       "🛬 Destino",
       options=lista_opcoes_aeroportos,
-      index=5,  # GIG por padrão
+      index=5,
   )
   destino_iata = AEROPORTOS[destino_sel]
 
@@ -125,7 +125,7 @@ def buscar_serpapi(dep_iata, arr_iata, data_obj):
         "outbound_date": data_iso,
         "currency": "BRL",
         "hl": "pt",
-        "type": "2",  # Trecho direto
+        "type": "2",
         "adults": int(num_pax),
         "api_key": SERPAPI_KEY,
     }
@@ -145,7 +145,7 @@ def buscar_serpapi(dep_iata, arr_iata, data_obj):
 # --- BUSCA 2: DUFFEL API (BASE NDC/AIRLINES) ---
 def buscar_duffel(dep_iata, arr_iata, data_obj):
   if not DUFFEL_TOKEN:
-    return []
+    return [], "Chave DUFFEL_TOKEN não configurada."
   try:
     duffel = Duffel(access_token=DUFFEL_TOKEN)
     slices = [{
@@ -168,10 +168,15 @@ def buscar_duffel(dep_iata, arr_iata, data_obj):
         .sort("total_amount")
         .execute()
     )
-    return list(offers)
-  except Exception:
-    # Retorno silencioso caso esteja em modo sandbox de testes sem resposta para rota específica
-    return []
+    res_list = list(offers)
+    msg = (
+        "OK"
+        if res_list
+        else "Chave em Modo Teste (Sandbox) restringe rotas domésticas BR."
+    )
+    return res_list, msg
+  except Exception as e:
+    return [], f"Detalhe Duffel: {e}"
 
 
 # --- PROCESSAMENTO E CRUZAMENTO ---
@@ -195,7 +200,6 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
     st.subheader(titulo_busca)
 
     with st.spinner("Consultando Google Flights e Duffel API simultaneamente..."):
-      # Executa consultas
       voos_ida_serp = buscar_serpapi(origem_iata, destino_iata, data_ida)
       voos_volta_serp = (
           buscar_serpapi(destino_iata, origem_iata, data_volta)
@@ -203,9 +207,10 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
           else []
       )
 
-      voos_duffel = buscar_duffel(origem_iata, destino_iata, data_ida)
+      voos_duffel, status_duffel = buscar_duffel(
+          origem_iata, destino_iata, data_ida
+      )
 
-      # Indicadores de bases ativas
       col_b1, col_b2 = st.columns(2)
       with col_b1:
         st.success(
@@ -213,7 +218,8 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
         )
       with col_b2:
         st.info(
-            f"✅ Base Duffel (NDC Direct): {len(voos_duffel)} opções encontradas"
+            f"ℹ️ Base Duffel (NDC Direct): {len(voos_duffel)} opções encontradas"
+            f" ({status_duffel})"
         )
 
       st.write("")
@@ -244,7 +250,6 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
             )
             preco_reais = flight_option.get("price", 0)
 
-            # Selo de garantia de menor preço da listagem
             tag_fonte = (
                 "🏆 MENOR TARIFA ENCONTRADA"
                 if idx == 0
@@ -272,7 +277,7 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
               st.warning(
                   f"**TARIFA CONFIRMADA**\n\n"
                   f"### R$ {preco_reais:,.2f}\n"
-                  f"Fonte: Google Flights (Cruzado com Duffel)"
+                  f"Fonte: Google Flights"
               )
 
             with c3:
@@ -295,7 +300,6 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
             st.divider()
 
         else:
-          # Exibição Pareada Ida e Volta com Cruzamento
           data_iso_volta = data_volta.strftime("%Y-%m-%d")
           timestamp_ms_volta = int(
               datetime.datetime.combine(
@@ -346,8 +350,9 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
 
             preco_total = opt_ida.get("price", 0) + opt_volta.get("price", 0)
 
+            # CORREÇÃO DA PALAVRA "PARTIDA"
             tag_comb = (
-                "🏆 MELHOR PARIDA COMBINADA"
+                "🏆 MELHOR PARTIDA COMBINADA"
                 if i == 0
                 else "✅ COMBINAÇÃO RECOMENDADA"
             )
@@ -382,7 +387,7 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
               st.warning(
                   f"**TARIFA TOTAL COMBINADA**\n\n"
                   f"### R$ {preco_total:,.2f}\n"
-                  f"Validada via Multi-Base"
+                  f"Fonte: Google Flights"
               )
 
             with c4:
