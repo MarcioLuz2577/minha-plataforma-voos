@@ -144,8 +144,8 @@ def buscar_serpapi(dep_iata, arr_iata, data_obj):
     return []
 
 
-# --- BUSCA 2: DUFFEL API (HTTP REST COM RETRY E TIMEOUT EXPANDIDO) ---
-def buscar_duffel(dep_iata, arr_iata, data_obj):
+# --- BUSCA 2: DUFFEL API (REST HTTP) ---
+def buscar_duffel(dep_iata, arr_iata, data_ida_obj, data_volta_obj=None):
   if not DUFFEL_TOKEN:
     return [], "Chave DUFFEL_TOKEN não configurada."
   try:
@@ -155,13 +155,24 @@ def buscar_duffel(dep_iata, arr_iata, data_obj):
         "Duffel-Version": "v2",
         "Content-Type": "application/json",
     }
+
+    # Configura os trechos (slices): Se for Ida e Volta, cria 2 slices
+    slices_list = [{
+        "origin": dep_iata,
+        "destination": arr_iata,
+        "departure_date": data_ida_obj.strftime("%Y-%m-%d"),
+    }]
+
+    if data_volta_obj and tipo_viagem == "Ida e Volta":
+      slices_list.append({
+          "origin": arr_iata,
+          "destination": dep_iata,
+          "departure_date": data_volta_obj.strftime("%Y-%m-%d"),
+      })
+
     payload = {
         "data": {
-            "slices": [{
-                "origin": dep_iata,
-                "destination": arr_iata,
-                "departure_date": data_obj.strftime("%Y-%m-%d"),
-            }],
+            "slices": slices_list,
             "passengers": [{"type": "adult"} for _ in range(int(num_pax))],
             "cabin_class": "economy",
         }
@@ -222,7 +233,7 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
       )
 
       voos_duffel, status_duffel = buscar_duffel(
-          origem_iata, destino_iata, data_ida
+          origem_iata, destino_iata, data_ida, data_volta
       )
 
       col_b1, col_b2 = st.columns(2)
@@ -241,215 +252,327 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
       if not voos_ida_serp and not voos_duffel:
         st.warning("Nenhum voo encontrado nas duas bases consultadas.")
       else:
-        # RENDERIZAÇÃO VOOS GOOGLE FLIGHTS (SERPAPI)
-        if tipo_viagem == "Somente Ida":
-          for idx, flight_option in enumerate(voos_ida_serp[:5]):
-            flights_list = flight_option.get("flights", [])
-            if not flights_list:
-              continue
+        # --- BLOCO 1: EXIBIÇÃO RESULTADOS GOOGLE FLIGHTS (SERPAPI) ---
+        if voos_ida_serp:
+          st.markdown("## 🔍 Ofertas Encontradas no Google Flights")
 
-            voo = flights_list[0]
-            cia = voo.get("airline", "Companhia Aérea")
-            num_voo = voo.get("flight_number", "")
-            hora_dep = (
-                voo.get("departure_airport", {}).get("time", "").split()[-1]
-            )
-            hora_arr = (
-                voo.get("arrival_airport", {}).get("time", "").split()[-1]
-            )
-            duracao_min = flight_option.get("total_duration", 0)
-            duracao_fmt = (
-                f"{duracao_min // 60}h {duracao_min % 60}m"
-                if duracao_min
-                else "N/A"
-            )
-            preco_reais = flight_option.get("price", 0)
+          if tipo_viagem == "Somente Ida":
+            for idx, flight_option in enumerate(voos_ida_serp[:5]):
+              flights_list = flight_option.get("flights", [])
+              if not flights_list:
+                continue
 
-            tag_fonte = (
-                "🏆 MENOR TARIFA ENCONTRADA"
-                if idx == 0
-                else "✅ OPORTUNIDADE VALIDADA"
-            )
+              voo = flights_list[0]
+              cia = voo.get("airline", "Companhia Aérea")
+              num_voo = voo.get("flight_number", "")
+              hora_dep = (
+                  voo.get("departure_airport", {}).get("time", "").split()[-1]
+              )
+              hora_arr = (
+                  voo.get("arrival_airport", {}).get("time", "").split()[-1]
+              )
+              duracao_min = flight_option.get("total_duration", 0)
+              duracao_fmt = (
+                  f"{duracao_min // 60}h {duracao_min % 60}m"
+                  if duracao_min
+                  else "N/A"
+              )
+              preco_reais = flight_option.get("price", 0)
 
-            st.markdown(
-                f"### ✈️ {cia} <small style='color:gray;'>• Voo {num_voo}</small>"
-                f" <span style='background-color:#d4edda; color:#155724;"
-                f" padding:3px 8px; border-radius:5px;"
-                f" font-size:12px;'>{tag_fonte}</span>",
-                unsafe_allow_html=True,
-            )
-
-            c1, c2, c3 = st.columns([4, 4, 3])
-            with c1:
-              st.info(
-                  f"**🛫 IDA ({data_br_ida})**\n\n"
-                  f"**{origem_iata}** ({hora_dep}) ➡️ **{destino_iata}**"
-                  f" ({hora_arr})\n\n"
-                  f"⏱️ Duração: {duracao_fmt}"
+              tag_fonte = (
+                  "🏆 MENOR TARIFA GOOGLE"
+                  if idx == 0
+                  else "✅ OPORTUNIDADE VALIDADA"
               )
 
-            with c2:
-              st.warning(
-                  f"**TARIFA CONFIRMADA**\n\n"
-                  f"### R$ {preco_reais:,.2f}\n"
-                  f"Fonte: Google Flights"
+              st.markdown(
+                  f"### ✈️ {cia} <small style='color:gray;'>• Voo {num_voo}</small>"
+                  f" <span style='background-color:#d4edda; color:#155724;"
+                  f" padding:3px 8px; border-radius:5px;"
+                  f" font-size:12px;'>{tag_fonte}</span>",
+                  unsafe_allow_html=True,
               )
 
-            with c3:
-              st.write("")
-              st.write("")
-              if modalidade_busca == "Milhas":
-                btn_texto = "Resgatar em Milhas 🔗"
-                if "GOL" in cia.upper():
-                  link_acao = f"https://www.smiles.com.br/membros/emissao-com-milhas?originAirport={origem_iata}&destinationAirport={destino_iata}&departureDate={timestamp_ms_ida}&adults={num_pax}&tripType=1"
-                elif "LATAM" in cia.upper():
-                  link_acao = f"https://www.latamairlines.com/br/pt/ofertas-voos?origin={origem_iata}&outbound={data_iso_ida}T12%3A00%3A00.000Z&destination={destino_iata}&adt={num_pax}&trip=ONE_WAY&redemption=true"
+              c1, c2, c3 = st.columns([4, 4, 3])
+              with c1:
+                st.info(
+                    f"**🛫 IDA ({data_br_ida})**\n\n"
+                    f"**{origem_iata}** ({hora_dep}) ➡️ **{destino_iata}**"
+                    f" ({hora_arr})\n\n"
+                    f"⏱️ Duração: {duracao_fmt}"
+                )
+
+              with c2:
+                st.warning(
+                    f"**TARIFA CONFIRMADA**\n\n"
+                    f"### R$ {preco_reais:,.2f}\n"
+                    f"Fonte: Google Flights"
+                )
+
+              with c3:
+                st.write("")
+                st.write("")
+                if modalidade_busca == "Milhas":
+                  btn_texto = "Resgatar em Milhas 🔗"
+                  if "GOL" in cia.upper():
+                    link_acao = f"https://www.smiles.com.br/membros/emissao-com-milhas?originAirport={origem_iata}&destinationAirport={destino_iata}&departureDate={timestamp_ms_ida}&adults={num_pax}&tripType=1"
+                  elif "LATAM" in cia.upper():
+                    link_acao = f"https://www.latamairlines.com/br/pt/ofertas-voos?origin={origem_iata}&outbound={data_iso_ida}T12%3A00%3A00.000Z&destination={destino_iata}&adt={num_pax}&trip=ONE_WAY&redemption=true"
+                  else:
+                    link_acao = f"https://www.google.com/travel/flights?q=Flights%20to%20{destino_iata}%20from%20{origem_iata}%20on%20{data_iso_ida}"
                 else:
+                  btn_texto = "Comprar Voo 🔗"
                   link_acao = f"https://www.google.com/travel/flights?q=Flights%20to%20{destino_iata}%20from%20{origem_iata}%20on%20{data_iso_ida}"
-              else:
-                btn_texto = "Comprar Voo 🔗"
-                link_acao = f"https://www.google.com/travel/flights?q=Flights%20to%20{destino_iata}%20from%20{origem_iata}%20on%20{data_iso_ida}"
 
-              st.link_button(btn_texto, link_acao, use_container_width=True)
+                st.link_button(btn_texto, link_acao, use_container_width=True)
 
-            st.divider()
+              st.divider()
 
-        else:
-          data_iso_volta = data_volta.strftime("%Y-%m-%d")
-          timestamp_ms_volta = int(
-              datetime.datetime.combine(
-                  data_volta, datetime.time.min
-              ).timestamp()
-              * 1000
-          )
-
-          qtd_combinacoes = min(len(voos_ida_serp), len(voos_volta_serp), 5)
-
-          for i in range(qtd_combinacoes):
-            opt_ida = voos_ida_serp[i]
-            opt_volta = voos_volta_serp[i]
-
-            voo_ida = opt_ida["flights"][0]
-            voo_volta = opt_volta["flights"][0]
-
-            cia_ida = voo_ida.get("airline", "Companhia Aérea")
-            cia_volta = voo_volta.get("airline", "Companhia Aérea")
-
-            num_ida = voo_ida.get("flight_number", "")
-            num_volta = voo_volta.get("flight_number", "")
-
-            h_dep_ida = (
-                voo_ida.get("departure_airport", {}).get("time", "").split()[-1]
-            )
-            h_arr_ida = (
-                voo_ida.get("arrival_airport", {}).get("time", "").split()[-1]
+          else:
+            data_iso_volta = data_volta.strftime("%Y-%m-%d")
+            timestamp_ms_volta = int(
+                datetime.datetime.combine(
+                    data_volta, datetime.time.min
+                ).timestamp()
+                * 1000
             )
 
-            h_dep_volta = (
-                voo_volta.get("departure_airport", {})
-                .get("time", "")
-                .split()[-1]
-            )
-            h_arr_volta = (
-                voo_volta.get("arrival_airport", {}).get("time", "").split()[-1]
-            )
+            qtd_combinacoes = min(len(voos_ida_serp), len(voos_volta_serp), 5)
 
-            dur_ida = (
-                f"{opt_ida.get('total_duration', 0) // 60}h"
-                f" {opt_ida.get('total_duration', 0) % 60}m"
-            )
-            dur_volta = (
-                f"{opt_volta.get('total_duration', 0) // 60}h"
-                f" {opt_volta.get('total_duration', 0) % 60}m"
-            )
+            for i in range(qtd_combinacoes):
+              opt_ida = voos_ida_serp[i]
+              opt_volta = voos_volta_serp[i]
 
-            preco_total = opt_ida.get("price", 0) + opt_volta.get("price", 0)
+              voo_ida = opt_ida["flights"][0]
+              voo_volta = opt_volta["flights"][0]
 
-            tag_comb = (
-                "🏆 MELHOR PARTIDA COMBINADA"
-                if i == 0
-                else "✅ COMBINAÇÃO RECOMENDADA"
-            )
+              cia_ida = voo_ida.get("airline", "Companhia Aérea")
+              cia_volta = voo_volta.get("airline", "Companhia Aérea")
 
-            st.markdown(
-                f"### ✈️ Opção #{i+1}: {cia_ida} / {cia_volta} <span"
-                " style='background-color:#d4edda; color:#155724;"
-                " padding:3px 8px; border-radius:5px;"
-                f" font-size:12px;'>{tag_comb}</span>",
-                unsafe_allow_html=True,
-            )
+              num_ida = voo_ida.get("flight_number", "")
+              num_volta = voo_volta.get("flight_number", "")
 
-            c1, c2, c3, c4 = st.columns([3, 3, 3, 2])
-
-            with c1:
-              st.info(
-                  f"**🛫 IDA ({data_br_ida})** • Voo {num_ida}\n\n"
-                  f"**{origem_iata}** ({h_dep_ida}) ➡️ **{destino_iata}**"
-                  f" ({h_arr_ida})\n\n"
-                  f"⏱️ Duração: {dur_ida}"
+              h_dep_ida = (
+                  voo_ida.get("departure_airport", {}).get("time", "").split()[-1]
+              )
+              h_arr_ida = (
+                  voo_ida.get("arrival_airport", {}).get("time", "").split()[-1]
               )
 
-            with c2:
-              st.info(
-                  f"**🛬 VOLTA ({data_br_volta})** • Voo {num_volta}\n\n"
-                  f"**{destino_iata}** ({h_dep_volta}) ➡️ **{origem_iata}**"
-                  f" ({h_arr_volta})\n\n"
-                  f"⏱️ Duração: {dur_volta}"
+              h_dep_volta = (
+                  voo_volta.get("departure_airport", {})
+                  .get("time", "")
+                  .split()[-1]
+              )
+              h_arr_volta = (
+                  voo_volta.get("arrival_airport", {})
+                  .get("time", "")
+                  .split()[-1]
               )
 
-            with c3:
-              st.warning(
-                  f"**TARIFA TOTAL COMBINADA**\n\n"
-                  f"### R$ {preco_total:,.2f}\n"
-                  f"Fonte: Google Flights"
+              dur_ida = (
+                  f"{opt_ida.get('total_duration', 0) // 60}h"
+                  f" {opt_ida.get('total_duration', 0) % 60}m"
+              )
+              dur_volta = (
+                  f"{opt_volta.get('total_duration', 0) // 60}h"
+                  f" {opt_volta.get('total_duration', 0) % 60}m"
               )
 
-            with c4:
-              st.write("")
-              st.write("")
-              if modalidade_busca == "Milhas":
-                btn_texto = "Resgatar em Milhas 🔗"
-                if "GOL" in cia_ida.upper():
-                  link_acao = f"https://www.smiles.com.br/membros/emissao-com-milhas?originAirport={origem_iata}&destinationAirport={destino_iata}&departureDate={timestamp_ms_ida}&returnDate={timestamp_ms_volta}&adults={num_pax}&tripType=2"
-                elif "LATAM" in cia_ida.upper():
-                  link_acao = f"https://www.latamairlines.com/br/pt/ofertas-voos?origin={origem_iata}&outbound={data_iso_ida}T12%3A00%3A00.000Z&destination={destino_iata}&inbound={data_iso_volta}T12%3A00%3A00.000Z&adt={num_pax}&trip=ROUND_TRIP&redemption=true"
+              preco_total = opt_ida.get("price", 0) + opt_volta.get("price", 0)
+
+              tag_comb = (
+                  "🏆 MELHOR PARTIDA COMBINADA"
+                  if i == 0
+                  else "✅ COMBINAÇÃO RECOMENDADA"
+              )
+
+              st.markdown(
+                  f"### ✈️ Opção #{i+1}: {cia_ida} / {cia_volta} <span"
+                  " style='background-color:#d4edda; color:#155724;"
+                  " padding:3px 8px; border-radius:5px;"
+                  f" font-size:12px;'>{tag_comb}</span>",
+                  unsafe_allow_html=True,
+              )
+
+              c1, c2, c3, c4 = st.columns([3, 3, 3, 2])
+
+              with c1:
+                st.info(
+                    f"**🛫 IDA ({data_br_ida})** • Voo {num_ida}\n\n"
+                    f"**{origem_iata}** ({h_dep_ida}) ➡️ **{destino_iata}**"
+                    f" ({h_arr_ida})\n\n"
+                    f"⏱️ Duração: {dur_ida}"
+                )
+
+              with c2:
+                st.info(
+                    f"**🛬 VOLTA ({data_br_volta})** • Voo {num_volta}\n\n"
+                    f"**{destino_iata}** ({h_dep_volta}) ➡️ **{origem_iata}**"
+                    f" ({h_arr_volta})\n\n"
+                    f"⏱️ Duração: {dur_volta}"
+                )
+
+              with c3:
+                st.warning(
+                    f"**TARIFA TOTAL COMBINADA**\n\n"
+                    f"### R$ {preco_total:,.2f}\n"
+                    f"Fonte: Google Flights"
+                )
+
+              with c4:
+                st.write("")
+                st.write("")
+                if modalidade_busca == "Milhas":
+                  btn_texto = "Resgatar em Milhas 🔗"
+                  if "GOL" in cia_ida.upper():
+                    link_acao = f"https://www.smiles.com.br/membros/emissao-com-milhas?originAirport={origem_iata}&destinationAirport={destino_iata}&departureDate={timestamp_ms_ida}&returnDate={timestamp_ms_volta}&adults={num_pax}&tripType=2"
+                  elif "LATAM" in cia_ida.upper():
+                    link_acao = f"https://www.latamairlines.com/br/pt/ofertas-voos?origin={origem_iata}&outbound={data_iso_ida}T12%3A00%3A00.000Z&destination={destino_iata}&inbound={data_iso_volta}T12%3A00%3A00.000Z&adt={num_pax}&trip=ROUND_TRIP&redemption=true"
+                  else:
+                    link_acao = f"https://www.google.com/travel/flights?q=Flights%20to%20{destino_iata}%20from%20{origem_iata}%20on%20{data_iso_ida}%20through%20{data_iso_volta}"
                 else:
+                  btn_texto = "Comprar Voo 🔗"
                   link_acao = f"https://www.google.com/travel/flights?q=Flights%20to%20{destino_iata}%20from%20{origem_iata}%20on%20{data_iso_ida}%20through%20{data_iso_volta}"
-              else:
-                btn_texto = "Comprar Voo 🔗"
-                link_acao = f"https://www.google.com/travel/flights?q=Flights%20to%20{destino_iata}%20from%20{origem_iata}%20on%20{data_iso_ida}%20through%20{data_iso_volta}"
 
-              st.link_button(btn_texto, link_acao, use_container_width=True)
+                st.link_button(btn_texto, link_acao, use_container_width=True)
 
-            st.divider()
+              st.divider()
 
-        # RENDERIZAÇÃO COMPLEMENTAR: OFERTAS DUFFEL (NDC DIRECT)
+        # --- BLOCO 2: EXIBIÇÃO RESULTADOS DUFFEL (NDC DIRECT) ---
         if voos_duffel:
-          st.subheader("🌐 Ofertas Exclusivas NDC Direct (Duffel)")
-          for idx_d, offer in enumerate(voos_duffel[:3]):
-            total_amount = offer.get("total_amount", "0.00")
+          st.write("")
+          st.markdown("## 🌐 Ofertas Exclusivas NDC Direct (Duffel)")
+
+          TAXA_EUR_BRL = 6.00  # Fator de conversão para a tarifa exibida na Sandbox/EUR ser convertida para BRL
+
+          for idx_d, offer in enumerate(voos_duffel[:5]):
+            total_raw = float(offer.get("total_amount", 0.0))
             currency = offer.get("total_currency", "BRL")
+
+            # Converte para BRL se a Duffel retornar em EUR/USD
+            if currency == "EUR":
+              total_brl = total_raw * TAXA_EUR_BRL
+            elif currency == "USD":
+              total_brl = total_raw * 5.50
+            else:
+              total_brl = total_raw
+
             owner_name = offer.get("owner", {}).get("name", "Companhia Aérea")
+            slices = offer.get("slices", [])
+
+            tag_duffel = (
+                "🏆 MELHOR OFERTA NDC" if idx_d == 0 else "✅ TARIFA NDC DIRECT"
+            )
 
             st.markdown(
-                f"### 🛫 {owner_name} <span style='background-color:#e2e3e5;"
-                " color:#383d41; padding:3px 8px; border-radius:5px;"
-                " font-size:12px;'>OFERTA DIRECT NDC</span>",
+                f"### ✈️ {owner_name} <span style='background-color:#cce5ff;"
+                " color:#004085; padding:3px 8px; border-radius:5px;"
+                f" font-size:12px;'>{tag_duffel}</span>",
                 unsafe_allow_html=True,
             )
 
-            cd1, cd2 = st.columns([6, 5])
-            with cd1:
-              st.info(
-                  f"**Trecho:** {origem_iata} ➡️ {destino_iata}\n\n"
-                  f"**Data:** {data_br_ida}"
+            # Lógica para tratar Ida e Volta vs Somente Ida na Duffel
+            if len(slices) >= 2 and tipo_viagem == "Ida e Volta":
+              c1, c2, c3, c4 = st.columns([3, 3, 3, 2])
+
+              # Slice 1 - Ida
+              s_ida = slices[0]
+              seg_ida = s_ida.get("segments", [{}])[0]
+              dep_time_i = (
+                  seg_ida.get("departing_at", "").split("T")[-1][:5]
+                  if "T" in seg_ida.get("departing_at", "")
+                  else ""
+              )
+              arr_time_i = (
+                  seg_ida.get("arriving_at", "").split("T")[-1][:5]
+                  if "T" in seg_ida.get("arriving_at", "")
+                  else ""
               )
 
-            with cd2:
-              st.success(
-                  f"**TARIFA NDC**\n\n"
-                  f"### {currency} {float(total_amount):,.2f}\n"
-                  f"Fonte: Duffel API (Direto da Cia)"
+              # Slice 2 - Volta
+              s_volta = slices[1]
+              seg_volta = s_volta.get("segments", [{}])[0]
+              dep_time_v = (
+                  seg_volta.get("departing_at", "").split("T")[-1][:5]
+                  if "T" in seg_volta.get("departing_at", "")
+                  else ""
               )
+              arr_time_v = (
+                  seg_volta.get("arriving_at", "").split("T")[-1][:5]
+                  if "T" in seg_volta.get("arriving_at", "")
+                  else ""
+              )
+
+              with c1:
+                st.info(
+                    f"**🛫 IDA ({data_br_ida})**\n\n"
+                    f"**{origem_iata}** ({dep_time_i}) ➡️ **{destino_iata}**"
+                    f" ({arr_time_i})"
+                )
+
+              with c2:
+                st.info(
+                    f"**🛬 VOLTA ({data_br_volta})**\n\n"
+                    f"**{destino_iata}** ({dep_time_v}) ➡️ **{origem_iata}**"
+                    f" ({arr_time_v})"
+                )
+
+              with c3:
+                st.warning(
+                    f"**TARIFA TOTAL NDC**\n\n"
+                    f"### R$ {total_brl:,.2f}\n"
+                    f"Fonte: Duffel Direct API"
+                )
+
+              with c4:
+                st.write("")
+                st.write("")
+                link_duffel = f"https://www.google.com/travel/flights?q=Flights%20to%20{destino_iata}%20from%20{origem_iata}%20on%20{data_iso_ida}%20through%20{data_iso_volta}"
+                st.link_button(
+                    "Comprar Voo 🔗", link_duffel, use_container_width=True
+                )
+
+            else:
+              # Somente Ida
+              s_ida = slices[0] if slices else {}
+              seg_ida = (
+                  s_ida.get("segments", [{}])[0]
+                  if s_ida.get("segments")
+                  else {}
+              )
+              dep_time_i = (
+                  seg_ida.get("departing_at", "").split("T")[-1][:5]
+                  if "T" in seg_ida.get("departing_at", "")
+                  else ""
+              )
+              arr_time_i = (
+                  seg_ida.get("arriving_at", "").split("T")[-1][:5]
+                  if "T" in seg_ida.get("arriving_at", "")
+                  else ""
+              )
+
+              c1, c2, c3 = st.columns([4, 4, 3])
+              with c1:
+                st.info(
+                    f"**🛫 IDA ({data_br_ida})**\n\n"
+                    f"**{origem_iata}** ({dep_time_i}) ➡️ **{destino_iata}**"
+                    f" ({arr_time_i})"
+                )
+
+              with c2:
+                st.warning(
+                    f"**TARIFA NDC CONFIRMADA**\n\n"
+                    f"### R$ {total_brl:,.2f}\n"
+                    f"Fonte: Duffel Direct API"
+                )
+
+              with c3:
+                st.write("")
+                st.write("")
+                link_duffel = f"https://www.google.com/travel/flights?q=Flights%20to%20{destino_iata}%20from%20{origem_iata}%20on%20{data_iso_ida}"
+                st.link_button(
+                    "Comprar Voo 🔗", link_duffel, use_container_width=True
+                )
 
             st.divider()
