@@ -156,7 +156,6 @@ def buscar_duffel(dep_iata, arr_iata, data_ida_obj, data_volta_obj=None):
         "Content-Type": "application/json",
     }
 
-    # Configura os trechos (slices): Se for Ida e Volta, cria 2 slices
     slices_list = [{
         "origin": dep_iata,
         "destination": arr_iata,
@@ -444,13 +443,12 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
           st.write("")
           st.markdown("## 🌐 Ofertas Exclusivas NDC Direct (Duffel)")
 
-          TAXA_EUR_BRL = 6.00  # Fator de conversão para a tarifa exibida na Sandbox/EUR ser convertida para BRL
+          TAXA_EUR_BRL = 6.00
 
           for idx_d, offer in enumerate(voos_duffel[:5]):
             total_raw = float(offer.get("total_amount", 0.0))
             currency = offer.get("total_currency", "BRL")
 
-            # Converte para BRL se a Duffel retornar em EUR/USD
             if currency == "EUR":
               total_brl = total_raw * TAXA_EUR_BRL
             elif currency == "USD":
@@ -465,14 +463,45 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
                 "🏆 MELHOR OFERTA NDC" if idx_d == 0 else "✅ TARIFA NDC DIRECT"
             )
 
+            # Extração dos números dos voos da Duffel
+            num_voo_ida_txt = ""
+            num_voo_volta_txt = ""
+
+            if slices:
+              # Número voo Ida
+              seg_i = slices[0].get("segments", [{}])[0]
+              num_i = seg_i.get("marketing_flight_number", "")
+              carrier_i = seg_i.get("marketing_carrier", {}).get(
+                  "iata_code", ""
+              )
+              num_voo_ida_txt = (
+                  f"{carrier_i}{num_i}" if (carrier_i and num_i) else num_i
+              )
+
+              # Número voo Volta (se houver)
+              if len(slices) >= 2:
+                seg_v = slices[1].get("segments", [{}])[0]
+                num_v = seg_v.get("marketing_flight_number", "")
+                carrier_v = seg_v.get("marketing_carrier", {}).get(
+                    "iata_code", ""
+                )
+                num_voo_volta_txt = (
+                    f"{carrier_v}{num_v}" if (carrier_v and num_v) else num_v
+                )
+
+            # Cabeçalho da opção com o número do voo
+            num_voo_header = (
+                f"• Voo {num_voo_ida_txt}" if num_voo_ida_txt else ""
+            )
+
             st.markdown(
-                f"### ✈️ {owner_name} <span style='background-color:#cce5ff;"
-                " color:#004085; padding:3px 8px; border-radius:5px;"
+                f"### ✈️ {owner_name} <small style='color:gray;'>{num_voo_header}</small>"
+                f" <span style='background-color:#cce5ff; color:#004085;"
+                f" padding:3px 8px; border-radius:5px;"
                 f" font-size:12px;'>{tag_duffel}</span>",
                 unsafe_allow_html=True,
             )
 
-            # Lógica para tratar Ida e Volta vs Somente Ida na Duffel
             if len(slices) >= 2 and tipo_viagem == "Ida e Volta":
               c1, c2, c3, c4 = st.columns([3, 3, 3, 2])
 
@@ -504,16 +533,23 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
                   else ""
               )
 
+              voo_ida_lbl = (
+                  f" • Voo {num_voo_ida_txt}" if num_voo_ida_txt else ""
+              )
+              voo_volta_lbl = (
+                  f" • Voo {num_voo_volta_txt}" if num_voo_volta_txt else ""
+              )
+
               with c1:
                 st.info(
-                    f"**🛫 IDA ({data_br_ida})**\n\n"
+                    f"**🛫 IDA ({data_br_ida})**{voo_ida_lbl}\n\n"
                     f"**{origem_iata}** ({dep_time_i}) ➡️ **{destino_iata}**"
                     f" ({arr_time_i})"
                 )
 
               with c2:
                 st.info(
-                    f"**🛬 VOLTA ({data_br_volta})**\n\n"
+                    f"**🛬 VOLTA ({data_br_volta})**{voo_volta_lbl}\n\n"
                     f"**{destino_iata}** ({dep_time_v}) ➡️ **{origem_iata}**"
                     f" ({arr_time_v})"
                 )
@@ -534,7 +570,6 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
                 )
 
             else:
-              # Somente Ida
               s_ida = slices[0] if slices else {}
               seg_ida = (
                   s_ida.get("segments", [{}])[0]
@@ -552,10 +587,14 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
                   else ""
               )
 
+              voo_ida_lbl = (
+                  f" • Voo {num_voo_ida_txt}" if num_voo_ida_txt else ""
+              )
+
               c1, c2, c3 = st.columns([4, 4, 3])
               with c1:
                 st.info(
-                    f"**🛫 IDA ({data_br_ida})**\n\n"
+                    f"**🛫 IDA ({data_br_ida})**{voo_ida_lbl}\n\n"
                     f"**{origem_iata}** ({dep_time_i}) ➡️ **{destino_iata}**"
                     f" ({arr_time_i})"
                 )
