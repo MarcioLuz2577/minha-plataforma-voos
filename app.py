@@ -148,6 +148,7 @@ def buscar_duffel(dep_iata, arr_iata, data_obj):
     return [], "Chave DUFFEL_TOKEN não configurada."
   try:
     duffel = Duffel(access_token=DUFFEL_TOKEN)
+
     slices = [{
         "origin": dep_iata,
         "destination": arr_iata,
@@ -155,10 +156,11 @@ def buscar_duffel(dep_iata, arr_iata, data_obj):
     }]
     passengers = [{"type": "adult"} for _ in range(int(num_pax))]
 
-    # Ajustado conforme SDK oficial recente
     offer_request = (
         duffel.offer_requests.create()
-        .requests(slices=slices, passengers=passengers, cabin_class="economy")
+        .slices(slices)
+        .passengers(passengers)
+        .cabin_class("economy")
         .execute()
     )
 
