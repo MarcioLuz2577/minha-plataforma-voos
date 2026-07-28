@@ -149,7 +149,7 @@ def buscar_duffel(dep_iata, arr_iata, data_obj):
   if not DUFFEL_TOKEN:
     return [], "Chave DUFFEL_TOKEN não configurada."
   try:
-    url = "https://api.duffel.com/air/offer_requests"
+    url = "https://api.duffel.com/air/offer_requests?return_offers=true"
     headers = {
         "Authorization": f"Bearer {DUFFEL_TOKEN}",
         "Duffel-Version": "v2",
@@ -167,14 +167,12 @@ def buscar_duffel(dep_iata, arr_iata, data_obj):
         }
     }
 
-    # Sessão HTTP com mecanismo de retry automático
     session = requests.Session()
     retries = Retry(
         total=2, backoff_factor=1, status_forcelist=[500, 502, 503, 504]
     )
     session.mount("https://", HTTPAdapter(max_retries=retries))
 
-    # Aumentado o timeout para 30 segundos
     res = session.post(url, json=payload, headers=headers, timeout=30)
     data = res.json()
 
@@ -243,6 +241,7 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
       if not voos_ida_serp and not voos_duffel:
         st.warning("Nenhum voo encontrado nas duas bases consultadas.")
       else:
+        # RENDERIZAÇÃO VOOS GOOGLE FLIGHTS (SERPAPI)
         if tipo_viagem == "Somente Ida":
           for idx, flight_option in enumerate(voos_ida_serp[:5]):
             flights_list = flight_option.get("flights", [])
@@ -421,5 +420,36 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
                 link_acao = f"https://www.google.com/travel/flights?q=Flights%20to%20{destino_iata}%20from%20{origem_iata}%20on%20{data_iso_ida}%20through%20{data_iso_volta}"
 
               st.link_button(btn_texto, link_acao, use_container_width=True)
+
+            st.divider()
+
+        # RENDERIZAÇÃO COMPLEMENTAR: OFERTAS DUFFEL (NDC DIRECT)
+        if voos_duffel:
+          st.subheader("🌐 Ofertas Exclusivas NDC Direct (Duffel)")
+          for idx_d, offer in enumerate(voos_duffel[:3]):
+            total_amount = offer.get("total_amount", "0.00")
+            currency = offer.get("total_currency", "BRL")
+            owner_name = offer.get("owner", {}).get("name", "Companhia Aérea")
+
+            st.markdown(
+                f"### 🛫 {owner_name} <span style='background-color:#e2e3e5;"
+                " color:#383d41; padding:3px 8px; border-radius:5px;"
+                " font-size:12px;'>OFERTA DIRECT NDC</span>",
+                unsafe_allow_html=True,
+            )
+
+            cd1, cd2 = st.columns([6, 5])
+            with cd1:
+              st.info(
+                  f"**Trecho:** {origem_iata} ➡️ {destino_iata}\n\n"
+                  f"**Data:** {data_br_ida}"
+              )
+
+            with cd2:
+              st.success(
+                  f"**TARIFA NDC**\n\n"
+                  f"### {currency} {float(total_amount):,.2f}\n"
+                  f"Fonte: Duffel API (Direto da Cia)"
+              )
 
             st.divider()
