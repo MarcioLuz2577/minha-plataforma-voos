@@ -12,12 +12,8 @@ st.set_page_config(
 st.title("✈️ Caçador Particular de Passagens & Milhas")
 st.caption("Resultados 100% reais consultados em tempo real via SerpApi.")
 
-# Configuração da Chave de API
-with st.sidebar:
-  st.header("🔑 Configuração")
-  api_key = st.text_input(
-      "Sua SerpApi Key:", type="password", help="Insira sua chave da SerpApi"
-  )
+# Puxa a chave oculta configurada nos Secrets do Streamlit Cloud
+SERPAPI_KEY = st.secrets.get("SERPAPI_KEY", "")
 
 # Formulário Principal
 col1, col2, col3, col4 = st.columns(4)
@@ -39,9 +35,10 @@ with col4:
   )
 
 if st.button("🔎 Buscar Oportunidades Reais", use_container_width=True):
-  if not api_key:
+  if not SERPAPI_KEY:
     st.error(
-        "⚠️ Por favor, informe sua chave da SerpApi no menu lateral esquerdo."
+        "⚠️ Chave da SerpApi não encontrada nos Secrets. Configure a variável"
+        " SERPAPI_KEY no painel do Streamlit."
     )
   else:
     st.divider()
@@ -65,7 +62,7 @@ if st.button("🔎 Buscar Oportunidades Reais", use_container_width=True):
           "currency": "BRL",
           "hl": "pt-br",
           "adults": num_pax,
-          "api_key": api_key,
+          "api_key": SERPAPI_KEY,
       }
 
       try:
@@ -80,13 +77,11 @@ if st.button("🔎 Buscar Oportunidades Reais", use_container_width=True):
               "Nenhum voo encontrado para esta rota/data nas buscas reais."
           )
         else:
-          # Exibe até os 5 melhores voos REAIS
           for flight_option in best_flights[:5]:
             flight = flight_option["flights"][0]
 
             cia = flight.get("airline", "Companhia Aérea")
             num_voo = flight.get("flight_number", "")
-            dep_time = flight.get("departure_token", "").split(" ")
             hora_dep = (
                 flight.get("departure_airport", {}).get("time", "").split()[-1]
             )
@@ -97,7 +92,7 @@ if st.button("🔎 Buscar Oportunidades Reais", use_container_width=True):
             duracao_fmt = f"{duracao_min // 60}h {duracao_min % 60}m"
             preco_reais = flight_option.get("price", 0)
 
-            # Cálculo de milhas com base na cotação média de R$ 20 / 1.000 milhas
+            # Estimativa proporcional em milhas (cotação base R$ 20 / 1k milhas)
             milhas_est = (
                 f"{int((preco_reais / 20) * 1000):,} milhas".replace(",", ".")
                 if preco_reais
@@ -112,7 +107,7 @@ if st.button("🔎 Buscar Oportunidades Reais", use_container_width=True):
             else:
               link_resgate = f"https://www.google.com/travel/flights?q=Flights%20to%20{destino}%20from%20{origem}%20on%20{data_iso}"
 
-            # Renderização do Card no Estilo Flypass com Dados Reais
+            # Renderização dos Cards
             st.markdown(
                 f"### ✈️ {cia} <small style='color:gray;'>• Voo"
                 f" {num_voo}</small>",
