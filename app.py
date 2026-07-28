@@ -1,5 +1,5 @@
 import datetime
-from duffel_api import Duffel
+import requests
 from serpapi import GoogleSearch
 import streamlit as st
 
@@ -142,40 +142,43 @@ def buscar_serpapi(dep_iata, arr_iata, data_obj):
     return []
 
 
-# --- BUSCA 2: DUFFEL API (BASE NDC/AIRLINES) ---
+# --- BUSCA 2: DUFFEL API (VIA HTTP REST NATIVO COM VERSÃO V2) ---
 def buscar_duffel(dep_iata, arr_iata, data_obj):
   if not DUFFEL_TOKEN:
     return [], "Chave DUFFEL_TOKEN não configurada."
   try:
-    duffel = Duffel(access_token=DUFFEL_TOKEN)
+    url = "https://api.duffel.com/air/offer_requests"
+    headers = {
+        "Authorization": f"Bearer {DUFFEL_TOKEN}",
+        "Duffel-Version": "v2",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "data": {
+            "slices": [{
+                "origin": dep_iata,
+                "destination": arr_iata,
+                "departure_date": data_obj.strftime("%Y-%m-%d"),
+            }],
+            "passengers": [{"type": "adult"} for _ in range(int(num_pax))],
+            "cabin_class": "economy",
+        }
+    }
 
-    slices = [{
-        "origin": dep_iata,
-        "destination": arr_iata,
-        "departure_date": data_obj.strftime("%Y-%m-%d"),
-    }]
-    passengers = [{"type": "adult"} for _ in range(int(num_pax))]
+    res = requests.post(url, json=payload, headers=headers, timeout=10)
+    data = res.json()
 
-    offer_request = (
-        duffel.offer_requests.create()
-        .slices(slices)
-        .passengers(passengers)
-        .cabin_class("economy")
-        .execute()
-    )
-
-    offers = (
-        duffel.offers.list(offer_request.id)
-        .sort("total_amount")
-        .execute()
-    )
-    res_list = list(offers)
-    msg = (
-        "OK"
-        if res_list
-        else "Sem voos retornados (Modo Sandbox de teste restringe rotas BR)."
-    )
-    return res_list, msg
+    if res.status_code == 201 or res.status_code == 200:
+      offers = data.get("data", {}).get("offers", [])
+      msg = (
+          "OK"
+          if offers
+          else "Sem voos retornados (Sandbox de teste restringe rotas BR)."
+      )
+      return offers, msg
+    else:
+      err_msg = data.get("errors", [{}])[0].get("message", "Erro desconhecido")
+      return [], f"Detalhe Duffel: {err_msg}"
   except Exception as e:
     return [], f"Detalhe Duffel: {e}"
 
