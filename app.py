@@ -12,10 +12,10 @@ st.set_page_config(
 st.title("✈️ Caçador Particular de Passagens & Milhas")
 st.caption("Resultados 100% reais consultados em tempo real via SerpApi.")
 
-# Puxa a chave oculta configurada nos Secrets
+# Puxa a chave oculta configurada nos Secrets do Streamlit Cloud
 SERPAPI_KEY = st.secrets.get("SERPAPI_KEY", "")
 
-# --- DICIONÁRIO DE AEROPORTOS (Busca por Cidade, Código ou Nome) ---
+# --- DICIONÁRIO DE AEROPORTOS ---
 AEROPORTOS = {
     "São Paulo - Todos os Aeroportos (SAO)": "SAO",
     "São Paulo - Guarulhos (GRU)": "GRU",
@@ -48,26 +48,35 @@ AEROPORTOS = {
 
 lista_opcoes_aeroportos = list(AEROPORTOS.keys())
 
-# --- INTERFACE DO USUÁRIO ---
+# --- OPÇÕES SUPERIORES DE FILTRO ---
+col_opt1, col_opt2 = st.columns(2)
 
-# 1. Tipo de Viagem
-tipo_viagem = st.radio(
-    "Tipo de Viagem:",
-    options=["Somente Ida", "Ida e Volta"],
-    horizontal=True,
-    index=0,
-)
+with col_opt1:
+  tipo_viagem = st.radio(
+      "Tipo de Viagem:",
+      options=["Somente Ida", "Ida e Volta"],
+      horizontal=True,
+      index=0,
+  )
+
+with col_opt2:
+  modalidade_busca = st.radio(
+      "Buscar por:",
+      options=["Dinheiro", "Milhas"],
+      horizontal=True,
+      index=0,
+  )
 
 st.write("")
 
-# 2. Formulário de Busca com Dropdown Autocomplete
+# --- FORMULÁRIO DE BUSCA ---
 col1, col2, col3, col4, col5 = st.columns([3, 3, 2, 2, 2])
 
 with col1:
   origem_sel = st.selectbox(
       "🛫 Origem",
       options=lista_opcoes_aeroportos,
-      index=1,  # Padrão: GRU
+      index=1,  # GRU por padrão
       help="Digite a cidade ou código IATA (ex: São Paulo, GRU, Galeão...)",
   )
   origem_iata = AEROPORTOS[origem_sel]
@@ -76,7 +85,7 @@ with col2:
   destino_sel = st.selectbox(
       "🛬 Destino",
       options=lista_opcoes_aeroportos,
-      index=5,  # Padrão: GIG
+      index=5,  # GIG por padrão
       help="Digite a cidade ou código IATA (ex: Rio, GIG, CNF...)",
   )
   destino_iata = AEROPORTOS[destino_sel]
@@ -93,19 +102,14 @@ with col4:
     )
   else:
     data_volta = None
-    st.text_input(
-        "📅 Data de Volta",
-        value="Apenas Ida",
-        disabled=True,
-    )
+    st.text_input("📅 Data de Volta", value="Apenas Ida", disabled=True)
 
 with col5:
   num_pax = st.number_input(
       "👤 Passageiros", min_value=1, max_value=9, value=1
   )
 
-
-# --- PROCESSAMENTO DA BUSCA REAL ---
+# --- PROCESSAMENTO DA BUSCA ---
 if st.button("🔎 Buscar Oportunidades Reais", use_container_width=True):
   if not SERPAPI_KEY:
     st.error(
@@ -120,9 +124,7 @@ if st.button("🔎 Buscar Oportunidades Reais", use_container_width=True):
         * 1000
     )
 
-    titulo_busca = (
-        f"📍 Voos Reais de {origem_iata} para {destino_iata} ({data_br_ida})"
-    )
+    titulo_busca = f"📍 Voos Reais de {origem_iata} para {destino_iata} ({data_br_ida}) • Busca em {modalidade_busca}"
     if tipo_viagem == "Ida e Volta" and data_volta:
       data_br_volta = data_volta.strftime("%d/%m/%Y")
       titulo_busca += f" | Volta: {data_br_volta}"
@@ -130,7 +132,6 @@ if st.button("🔎 Buscar Oportunidades Reais", use_container_width=True):
     st.subheader(titulo_busca)
 
     with st.spinner("Consultando dados reais em tempo real no Google Flights..."):
-      # Define o tipo para a API (1 = Ida e Volta, 2 = Somente Ida)
       type_param = "1" if tipo_viagem == "Ida e Volta" else "2"
 
       params = {
@@ -195,31 +196,29 @@ if st.button("🔎 Buscar Oportunidades Reais", use_container_width=True):
                 "Direto" if len(flights_list) == 1 else f"{len(flights_list)-1} parada(s)"
             )
 
-            # Estimativa de milhas (base proporcional R$ 20 / 1.000 milhas)
-            milhas_est = (
-                f"{int((preco_reais / 20) * 1000):,} milhas".replace(",", ".")
-                if preco_reais
-                else "Consulte"
-            )
-
-            # Links diretos para checkout oficial
-            if "GOL" in cia.upper():
-              link_resgate = f"https://www.smiles.com.br/membros/emissao-com-milhas?originAirport={origem_iata}&destinationAirport={destino_iata}&departureDate={timestamp_ms_ida}&adults={num_pax}&tripType=1"
-            elif "LATAM" in cia.upper():
-              link_resgate = f"https://www.latamairlines.com/br/pt/ofertas-voos?origin={origem_iata}&outbound={data_iso_ida}T12%3A00%3A00.000Z&destination={destino_iata}&adt={num_pax}&trip=ONE_WAY&redemption=true"
-            elif "AZUL" in cia.upper():
-              link_resgate = f"https://www.voezul.com.br/br/pt/home/selecao-voos?o1={origem_iata}&d1={destino_iata}&v1={data_iso_ida}&p1={num_pax}"
+            # Construção dos links de acionamento/resgate de acordo com a escolha (Dinheiro vs Milhas)
+            if modalidade_busca == "Milhas":
+              btn_texto = "Resgatar em Milhas 🔗"
+              if "GOL" in cia.upper():
+                link_acao = f"https://www.smiles.com.br/membros/emissao-com-milhas?originAirport={origem_iata}&destinationAirport={destino_iata}&departureDate={timestamp_ms_ida}&adults={num_pax}&tripType=1"
+              elif "LATAM" in cia.upper():
+                link_acao = f"https://www.latamairlines.com/br/pt/ofertas-voos?origin={origem_iata}&outbound={data_iso_ida}T12%3A00%3A00.000Z&destination={destino_iata}&adt={num_pax}&trip=ONE_WAY&redemption=true"
+              elif "AZUL" in cia.upper():
+                link_acao = f"https://www.voezul.com.br/br/pt/home/selecao-voos?o1={origem_iata}&d1={destino_iata}&v1={data_iso_ida}&p1={num_pax}"
+              else:
+                link_acao = f"https://www.google.com/travel/flights?q=Flights%20to%20{destino_iata}%20from%20{origem_iata}%20on%20{data_iso_ida}"
             else:
-              link_resgate = f"https://www.google.com/travel/flights?q=Flights%20to%20{destino_iata}%20from%20{origem_iata}%20on%20{data_iso_ida}"
+              btn_texto = "Comprar Voo 🔗"
+              link_acao = f"https://www.google.com/travel/flights?q=Flights%20to%20{destino_iata}%20from%20{origem_iata}%20on%20{data_iso_ida}"
 
-            # Renderização dos Cards na Interface
+            # Renderização dos Cards Limpos (Sem a caixa de estimativa)
             st.markdown(
                 f"### ✈️ {cia} <small style='color:gray;'>• Voo"
                 f" {num_voo}</small>",
                 unsafe_allow_html=True,
             )
 
-            c1, c2, c3, c4 = st.columns([3, 3, 3, 2])
+            c1, c2, c3 = st.columns([4, 4, 3])
 
             with c1:
               st.info(
@@ -229,25 +228,16 @@ if st.button("🔎 Buscar Oportunidades Reais", use_container_width=True):
               )
 
             with c2:
-              st.success(
-                  f"**ESTIMATIVA EM MILHAS**\n\n"
-                  f"### {milhas_est}\n"
-                  f"+ Taxas de embarque oficiais"
-              )
-
-            with c3:
               st.warning(
-                  f"**PAGANDO EM DINHEIRO**\n\n"
+                  f"**TARIFA EM DINHEIRO**\n\n"
                   f"### R$ {preco_reais:,.2f}\n"
                   f"Tarifa pagante real (Google Flights)"
               )
 
-            with c4:
+            with c3:
               st.write("")
               st.write("")
-              st.link_button(
-                  "Resgatar Voo 🔗", link_resgate, use_container_width=True
-              )
+              st.link_button(btn_texto, link_acao, use_container_width=True)
 
             st.divider()
 
