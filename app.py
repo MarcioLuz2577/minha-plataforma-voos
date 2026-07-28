@@ -463,44 +463,25 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
                             "🏆 MELHOR OFERTA NDC" if idx_d == 0 else "✅ TARIFA NDC DIRECT"
                         )
 
-                        # Extração correta dos números dos voos da Duffel
+                        # Extração isolada da IDA (Slice 0)
                         num_voo_ida_txt = ""
-                        num_voo_volta_txt = ""
-
-                        if slices:
-                            # Número voo Ida
-                            seg_i = slices[0].get("segments", [{}])[0]
-                            num_i = (
-                                seg_i.get("operating_carrier_flight_number")
-                                or seg_i.get("marketing_carrier_flight_number")
-                                or ""
-                            )
-                            carrier_i = seg_i.get("marketing_carrier", {}).get(
-                                "iata_code", ""
-                            )
-                            num_voo_ida_txt = (
-                                f"{carrier_i} {num_i}".strip() if (carrier_i or num_i) else ""
-                            )
-
-                            # Número voo Volta (se houver)
-                            if len(slices) >= 2:
-                                seg_v = slices[1].get("segments", [{}])[0]
-                                num_v = (
-                                    seg_v.get("operating_carrier_flight_number")
-                                    or seg_v.get("marketing_carrier_flight_number")
+                        if slices and len(slices) > 0:
+                            segments_ida = slices[0].get("segments", [])
+                            if segments_ida:
+                                seg_i = segments_ida[0]
+                                num_i = (
+                                    seg_i.get("operating_carrier_flight_number")
+                                    or seg_i.get("marketing_carrier_flight_number")
                                     or ""
                                 )
-                                carrier_v = seg_v.get("marketing_carrier", {}).get(
-                                    "iata_code", ""
+                                carrier_i = (
+                                    seg_i.get("marketing_carrier", {}).get("iata_code", "")
+                                    or seg_i.get("operating_carrier", {}).get("iata_code", "")
                                 )
-                                num_voo_volta_txt = (
-                                    f"{carrier_v} {num_v}".strip() if (carrier_v or num_v) else ""
-                                )
+                                num_voo_ida_txt = f"{carrier_i} {num_i}".strip()
 
-                        # Cabeçalho da opção com o número do voo
-                        num_voo_header = (
-                            f"• Voo {num_voo_ida_txt}" if num_voo_ida_txt else ""
-                        )
+                        # Cabeçalho da opção
+                        num_voo_header = f"• Voo {num_voo_ida_txt}" if num_voo_ida_txt else ""
 
                         st.markdown(
                             f"### ✈️ {owner_name} <small style='color:gray;'>{num_voo_header}</small>"
@@ -510,10 +491,11 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
                             unsafe_allow_html=True,
                         )
 
+                        # CASO 1: IDA E VOLTA
                         if len(slices) >= 2 and tipo_viagem == "Ida e Volta":
                             c1, c2, c3, c4 = st.columns([3, 3, 3, 2])
 
-                            # Slice 1 - Ida
+                            # Slice 0 - Ida
                             s_ida = slices[0]
                             seg_ida = s_ida.get("segments", [{}])[0]
                             dep_time_i = (
@@ -527,7 +509,7 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
                                 else ""
                             )
 
-                            # Slice 2 - Volta
+                            # Slice 1 - Volta (Extração 100% isolada)
                             s_volta = slices[1]
                             seg_volta = s_volta.get("segments", [{}])[0]
                             dep_time_v = (
@@ -541,12 +523,19 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
                                 else ""
                             )
 
-                            voo_ida_lbl = (
-                                f" • Voo {num_voo_ida_txt}" if num_voo_ida_txt else ""
+                            num_v = (
+                                seg_volta.get("operating_carrier_flight_number")
+                                or seg_volta.get("marketing_carrier_flight_number")
+                                or ""
                             )
-                            voo_volta_lbl = (
-                                f" • Voo {num_voo_volta_txt}" if num_voo_volta_txt else ""
+                            carrier_v = (
+                                seg_volta.get("marketing_carrier", {}).get("iata_code", "")
+                                or seg_volta.get("operating_carrier", {}).get("iata_code", "")
                             )
+                            num_voo_volta_txt = f"{carrier_v} {num_v}".strip()
+
+                            voo_ida_lbl = f" • Voo {num_voo_ida_txt}" if num_voo_ida_txt else ""
+                            voo_volta_lbl = f" • Voo {num_voo_volta_txt}" if num_voo_volta_txt else ""
 
                             with c1:
                                 st.info(
@@ -577,6 +566,7 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
                                     "Comprar Voo 🔗", link_duffel, use_container_width=True
                                 )
 
+                        # CASO 2: SOMENTE IDA
                         else:
                             s_ida = slices[0] if slices else {}
                             seg_ida = (
@@ -595,9 +585,7 @@ if st.button("🔎 Cruzar Bases e Buscar Melhores Ofertas", use_container_width=
                                 else ""
                             )
 
-                            voo_ida_lbl = (
-                                f" • Voo {num_voo_ida_txt}" if num_voo_ida_txt else ""
-                            )
+                            voo_ida_lbl = f" • Voo {num_voo_ida_txt}" if num_voo_ida_txt else ""
 
                             c1, c2, c3 = st.columns([4, 4, 3])
                             with c1:
