@@ -1,3 +1,2 @@
 streamlit
 google-search-results
-duffel_api
