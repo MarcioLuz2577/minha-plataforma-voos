@@ -1,18 +1,26 @@
 # -*- coding: utf-8 -*-
 """
 Caçador Particular de Passagens & Milhas
-========================================
-Busca em tempo real no Google Flights (SerpApi) com duas estratégias:
-  A) Trechos separados (ida + volta independentes)
-  B) Ida e volta unificada (round-trip único)
 
-Resultado normalizado em estrutura única.
-Framework de recomendação cash vs milhas pronto para API de milhas.
+Busca em tempo real no Google Flights via SerpApi.
+
+Estratégia A:
+- Busca ida e volta como trechos separados.
+- Combina as ofertas e encontra as menores combinações possíveis.
+
+Estratégia B:
+- Busca a passagem ida e volta como uma única tarifa round-trip.
+
+Ainda não há integração de milhas. A área de recomendação
+Cash vs. Milhas está preparada para a próxima etapa.
 """
 
 import datetime
-from serpapi import GoogleSearch
+import itertools
+from urllib.parse import quote_plus
+
 import streamlit as st
+from serpapi import GoogleSearch
 
 
 # ============================================================
@@ -38,7 +46,7 @@ SERPAPI_KEY = st.secrets.get("SERPAPI_KEY", "")
 
 
 # ============================================================
-# DICIONÁRIO DE AEROPORTOS
+# AEROPORTOS
 # ============================================================
 AEROPORTOS = {
     "São Paulo - Todos os Aeroportos (SAO)": "SAO",
@@ -70,133 +78,87 @@ AEROPORTOS = {
     "Madri (MAD)": "MAD",
 }
 
-lista_opcoes_aeroportos = list(AEROPORTOS.keys())
+LISTA_AEROPORTOS = list(AEROPORTOS.keys())
 
 
 # ============================================================
-# OPÇÕES SUPERIORES DE FILTRO
+# FORMULÁRIO
 # ============================================================
-col_opt1, col_opt2 = st.columns(2)
+col_tipo, col_classe = st.columns(2)
 
-with col_opt1:
+with col_tipo:
     tipo_viagem = st.radio(
-        "Tipo de Viagem:",
-        options=["Somente Ida", "Ida e Volta"],
+        "Tipo de viagem:",
+        ["Somente Ida", "Ida e Volta"],
         horizontal=True,
-        index=0,
     )
 
-with col_opt2:
+with col_classe:
     classe_cabine = st.radio(
         "Classe:",
-        options=["economy", "business", "first"],
+        ["economy", "business", "first"],
         horizontal=True,
-        index=0,
-        format_func=lambda x: {
+        format_func=lambda classe: {
             "economy": "Econômica",
             "business": "Executiva",
             "first": "Primeira Classe",
-        }[x],
+        }[classe],
     )
 
 st.write("")
 
-
-# ============================================================
-# FORMULÁRIO DE BUSCA
-# ============================================================
 col1, col2, col3, col4, col5 = st.columns([3, 3, 2, 2, 2])
 
 with col1:
-    origem_sel = st.selectbox("✈️ Origem", options=lista_opcoes_aeroportos, index=1)
-    origem_iata = AEROPORTOS[origem_sel]
+    origem_selecionada = st.selectbox(
+        "✈️ Origem",
+        LISTA_AEROPORTOS,
+        index=1,
+    )
+    origem_iata = AEROPORTOS[origem_selecionada]
 
 with col2:
-    destino_sel = st.selectbox("✈️ Destino", options=lista_opcoes_aeroportos, index=5)
-    destino_iata = AEROPORTOS[destino_sel]
+    destino_selecionado = st.selectbox(
+        "✈️ Destino",
+        LISTA_AEROPORTOS,
+        index=5,
+    )
+    destino_iata = AEROPORTOS[destino_selecionado]
 
 with col3:
-    data_ida = st.date_input("Data de Ida", datetime.date.today() + datetime.timedelta(days=7))
+    data_ida = st.date_input(
+        "Data de ida",
+        value=datetime.date.today() + datetime.timedelta(days=7),
+    )
 
 with col4:
     if tipo_viagem == "Ida e Volta":
-        data_volta = st.date_input("Data de Volta", data_ida + datetime.timedelta(days=7))
+        data_volta = st.date_input(
+            "Data de volta",
+            value=data_ida + datetime.timedelta(days=7),
+            min_value=data_ida,
+        )
     else:
         data_volta = None
-        st.text_input("Data de Volta", value="Apenas Ida", disabled=True)
+        st.text_input(
+            "Data de volta",
+            value="Apenas ida",
+            disabled=True,
+        )
 
 with col5:
-    num_pax = st.number_input("Passageiros", min_value=1, max_value=9, value=1)
+    numero_passageiros = st.number_input(
+        "Passageiros",
+        min_value=1,
+        max_value=9,
+        value=1,
+        step=1,
+    )
 
 
 # ============================================================
-# NORMALIZAÇÃO EM ESTRUTURA ÚNICA
+# FUNÇÕES AUXILIARES
 # ============================================================
-def formatar_duracao(minutos):
-    if not minutos:
-        return "N/A"
-    return f"{minutos // 60}h {minutos % 60}m"
-
-
-def normalizar_oferta_serp(flight_option, trecho, estrategia, indice):
-    """Converte oferta bruta do Google Flights em dicionário padronizado."""
-    flights = flight_option.get("flights", [])
-    if not flights:
-        return None
-
-    primeiro = flights[0]
-    ultimo = flights[-1]
-
-    cia_primeiro = primeiro.get("airline", "")
-    cia_ultimo = ultimo.get("airline", "")
-    if cia_primeiro and cia_ultimo and cia_primeiro != cia_ultimo:
-        cia = f"{cia_primeiro} / {cia_ultimo}"
-    else:
-        cia = cia_primeiro or cia_ultimo or "Companhia Aérea"
-
-    num_primeiro = primeiro.get("flight_number", "")
-    num_ultimo = ultimo.get("flight_number", "")
-    nums = [n for n in [num_primeiro, num_ultimo] if n]
-    num_voo = " / ".join(nums) if nums else ""
-
-    dep_airport = flights[0].get("departure_airport", {})
-    arr_airport = flights[-1].get("arrival_airport", {})
-    dep_time = (dep_airport.get("time", "") or "").split()[-1]
-    arr_time = (arr_airport.get("time", "") or "").split()[-1]
-
-    escalas = max(0, len(flights) - 1)
-    duracao_min = flight_option.get("total_duration", 0)
-    preco = flight_option.get("price", 0)
-    moeda = flight_option.get("currency", "BRL")
-
-    tipo_token = flight_option.get("type", "other_flights")
-
-    return {
-        "fonte": "Google Flights",
-        "estrategia": estrategia,  # A_separado | B_unificado
-        "trecho": trecho,          # ida | volta | ida_volta
-        "indice": indice,
-        "tipo_token": "Melhor" if tipo_token == "best_flights" else "Outra",
-        "cia": cia,
-        "num_voo": num_voo,
-        "escalas": escalas,
-        "duracao_min": duracao_min,
-        "duracao_fmt": formatar_duracao(duracao_min),
-        "dep_iata": dep_airport.get("id", ""),
-        "dep_time": dep_time,
-        "arr_iata": arr_airport.get("id", ""),
-        "arr_time": arr_time,
-        "preco": float(preco) if preco is not None else 0.0,
-        "moeda": moeda,
-        "raw": flight_option,
-    }
-
-
-# ============================================================
-# BUSCAS SERPAPI
-# ============================================================
-# No engine google_flights, travel_class deve ser NUMÉRICO:
-# 1=econômica, 2=premium economy, 3=executiva, 4=primeira.
 CLASSES_SERPAPI = {
     "economy": 1,
     "premium_economy": 2,
@@ -205,357 +167,926 @@ CLASSES_SERPAPI = {
 }
 
 
-def _executar_serpapi(params, label_busca):
-    """Executa a consulta e preserva o motivo quando a SerpApi não devolve voos."""
+def formatar_valor_brl(valor):
+    """Formata valor no padrão brasileiro."""
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def formatar_duracao(minutos):
+    """Transforma minutos em horas e minutos."""
+    if not minutos:
+        return "Não informado"
+
+    horas = minutos // 60
+    minutos_restantes = minutos % 60
+
+    if horas <= 0:
+        return f"{minutos_restantes}min"
+
+    return f"{horas}h {minutos_restantes}min"
+
+
+def extrair_horario(campo_horario):
+    """
+    O Google Flights/SerpApi pode devolver horário como:
+    '2026-08-08 06:00' ou apenas '06:00'.
+    """
+    if not campo_horario:
+        return "—"
+
+    texto = str(campo_horario).strip()
+
+    if " " in texto:
+        return texto.split()[-1]
+
+    return texto
+
+
+def converter_preco_para_float(preco):
+    """
+    Converte preço da SerpApi em float.
+    Aceita exemplos como:
+    500
+    500.0
+    'R$ 500'
+    '1.250'
+    """
+    if preco is None:
+        return 0.0
+
+    if isinstance(preco, (int, float)):
+        return float(preco)
+
+    texto = str(preco).strip()
+    texto = texto.replace("R$", "").replace("BRL", "").strip()
+    texto = texto.replace(".", "").replace(",", ".")
+
     try:
-        results = GoogleSearch(params).get_dict()
+        return float(texto)
+    except ValueError:
+        return 0.0
 
-        # Erro explícito da SerpApi (chave inválida, créditos, parâmetro, etc.)
-        if results.get("error"):
-            return [], str(results["error"])
 
-        todas = []
-        for item in results.get("best_flights", []) or []:
-            item = dict(item)
-            item["type"] = "best_flights"
-            todas.append(item)
-        for item in results.get("other_flights", []) or []:
-            item = dict(item)
-            item["type"] = "other_flights"
-            todas.append(item)
+def gerar_link_google_flights(
+    origem,
+    destino,
+    data_ida_obj,
+    data_volta_obj=None,
+):
+    """Gera link de conferência no Google Flights."""
+    consulta = f"Flights to {destino} from {origem} on {data_ida_obj.strftime('%Y-%m-%d')}"
 
-        if not todas:
-            chaves = ", ".join(sorted(results.keys())) if isinstance(results, dict) else "n/a"
+    if data_volta_obj:
+        consulta += f" through {data_volta_obj.strftime('%Y-%m-%d')}"
+
+    return f"https://www.google.com/travel/flights?q={quote_plus(consulta)}"
+
+
+# ============================================================
+# NORMALIZAÇÃO DAS OFERTAS DA SERPAPI
+# ============================================================
+def normalizar_oferta_serpapi(oferta_bruta, trecho, estrategia, indice):
+    """
+    Converte o retorno bruto da SerpApi em um formato padronizado.
+
+    trecho:
+        ida | volta | ida_volta
+
+    estrategia:
+        A_separado | B_unificado
+    """
+    voos = oferta_bruta.get("flights", [])
+
+    if not voos:
+        return None
+
+    primeiro_voo = voos[0]
+    ultimo_voo = voos[-1]
+
+    companhia_inicio = primeiro_voo.get("airline", "")
+    companhia_fim = ultimo_voo.get("airline", "")
+
+    if companhia_inicio and companhia_fim and companhia_inicio != companhia_fim:
+        companhia = f"{companhia_inicio} / {companhia_fim}"
+    else:
+        companhia = companhia_inicio or companhia_fim or "Companhia aérea"
+
+    numeros_voo = []
+
+    for voo in voos:
+        numero = voo.get("flight_number", "")
+        if numero and numero not in numeros_voo:
+            numeros_voo.append(numero)
+
+    numero_voo = " / ".join(numeros_voo)
+
+    aeroporto_saida = primeiro_voo.get("departure_airport", {})
+    aeroporto_chegada = ultimo_voo.get("arrival_airport", {})
+
+    preco = converter_preco_para_float(oferta_bruta.get("price", 0))
+    moeda = oferta_bruta.get("currency", "BRL")
+
+    tipo_origem = oferta_bruta.get("tipo_origem", "other_flights")
+
+    return {
+        "fonte": "Google Flights",
+        "estrategia": estrategia,
+        "trecho": trecho,
+        "indice": indice,
+        "tipo_origem": tipo_origem,
+        "cia": companhia,
+        "num_voo": numero_voo,
+        "escalas": max(0, len(voos) - 1),
+        "duracao_min": oferta_bruta.get("total_duration", 0),
+        "duracao_fmt": formatar_duracao(oferta_bruta.get("total_duration", 0)),
+        "dep_iata": aeroporto_saida.get("id", ""),
+        "dep_time": extrair_horario(aeroporto_saida.get("time", "")),
+        "arr_iata": aeroporto_chegada.get("id", ""),
+        "arr_time": extrair_horario(aeroporto_chegada.get("time", "")),
+        "preco": preco,
+        "moeda": moeda,
+    }
+
+
+# ============================================================
+# CONSULTA À SERPAPI
+# ============================================================
+def executar_serpapi(parametros, descricao_busca):
+    """
+    Executa busca na SerpApi e separa mensagens de erro.
+    """
+    try:
+        resultado = GoogleSearch(parametros).get_dict()
+
+        if resultado.get("error"):
+            return [], str(resultado["error"])
+
+        todas_ofertas = []
+
+        for oferta in resultado.get("best_flights", []) or []:
+            oferta = dict(oferta)
+            oferta["tipo_origem"] = "best_flights"
+            todas_ofertas.append(oferta)
+
+        for oferta in resultado.get("other_flights", []) or []:
+            oferta = dict(oferta)
+            oferta["tipo_origem"] = "other_flights"
+            todas_ofertas.append(oferta)
+
+        if not todas_ofertas:
+            chaves = ", ".join(sorted(resultado.keys()))
+
             return [], (
-                "A SerpApi respondeu sem opções de voo para esta consulta. "
-                f"Chaves retornadas: {chaves}. "
-                "Pode não haver disponibilidade para a data/filtros informados, "
-                "ou a conta SerpApi pode estar sem créditos / sem o engine Google Flights."
+                "A SerpApi respondeu sem opções de voo. "
+                f"Campos recebidos: {chaves}. "
+                "Tente outra data, rota, classe ou verifique os créditos da SerpApi."
             )
-        return todas, None
-    except Exception as e:
-        return [], f"Erro técnico na consulta {label_busca}: {e}"
+
+        return todas_ofertas, None
+
+    except Exception as erro:
+        return [], f"Erro técnico na busca {descricao_busca}: {erro}"
 
 
-def _params_base_serpapi(dep_iata, arr_iata, data_ida, adultos, classe):
+def criar_parametros_base(origem, destino, data, passageiros, classe):
+    """Cria parâmetros compartilhados pelas buscas."""
     return {
         "engine": "google_flights",
-        "departure_id": dep_iata,
-        "arrival_id": arr_iata,
-        "outbound_date": data_ida.strftime("%Y-%m-%d"),
+        "departure_id": origem,
+        "arrival_id": destino,
+        "outbound_date": data.strftime("%Y-%m-%d"),
         "currency": "BRL",
         "hl": "pt-BR",
         "gl": "br",
-        "adults": int(adultos),
+        "adults": int(passageiros),
         "travel_class": CLASSES_SERPAPI.get(classe, 1),
         "api_key": SERPAPI_KEY,
     }
 
 
-def buscar_serpapi_oneway(dep_iata, arr_iata, data_obj, adultos, classe):
-    """Estratégia A: busca um trecho isolado (somente ida)."""
+def buscar_ida(origem, destino, data, passageiros, classe):
+    """Estratégia A: busca trecho avulso de ida."""
     if not SERPAPI_KEY:
         return [], "SERPAPI_KEY não configurada."
-    params = _params_base_serpapi(dep_iata, arr_iata, data_obj, adultos, classe)
-    params["type"] = 2  # somente ida
-    return _executar_serpapi(params, f"ida {dep_iata}-{arr_iata}")
+
+    parametros = criar_parametros_base(
+        origem,
+        destino,
+        data,
+        passageiros,
+        classe,
+    )
+
+    parametros["type"] = 2
+
+    return executar_serpapi(
+        parametros,
+        f"ida {origem}-{destino}",
+    )
 
 
-def buscar_serpapi_roundtrip(dep_iata, arr_iata, data_ida_obj, data_volta_obj, adultos, classe):
-    """Estratégia B: ida e volta na mesma tarifa."""
+def buscar_ida_volta_unificada(
+    origem,
+    destino,
+    data_ida_obj,
+    data_volta_obj,
+    passageiros,
+    classe,
+):
+    """Estratégia B: busca ida e volta em uma única tarifa."""
     if not SERPAPI_KEY:
         return [], "SERPAPI_KEY não configurada."
-    params = _params_base_serpapi(dep_iata, arr_iata, data_ida_obj, adultos, classe)
-    params["type"] = 1  # ida e volta
-    params["return_date"] = data_volta_obj.strftime("%Y-%m-%d")
-    return _executar_serpapi(params, f"ida e volta {dep_iata}-{arr_iata}")
+
+    parametros = criar_parametros_base(
+        origem,
+        destino,
+        data_ida_obj,
+        passageiros,
+        classe,
+    )
+
+    parametros["type"] = 1
+    parametros["return_date"] = data_volta_obj.strftime("%Y-%m-%d")
+
+    return executar_serpapi(
+        parametros,
+        f"ida e volta {origem}-{destino}",
+    )
 
 
 # ============================================================
-# RECOMENDAÇÃO (FRAMEWORK — AGUARDANDO API DE MILHAS)
+# MOTOR DE RANKING CASH
+# ============================================================
+def gerar_combinacoes_ida_volta(
+    ofertas_ida,
+    ofertas_volta,
+    top_n=5,
+    max_ofertas_por_trecho=8,
+):
+    """
+    Combina as opções de ida com as opções de volta.
+
+    Em vez de combinar:
+    - primeira ida com primeira volta;
+    - segunda ida com segunda volta;
+
+    O código testa todas as combinações possíveis entre as ofertas
+    mais relevantes e ordena pelo preço total mais baixo.
+    """
+    idas_para_calculo = sorted(
+        ofertas_ida,
+        key=lambda oferta: oferta["preco"],
+    )[:max_ofertas_por_trecho]
+
+    voltas_para_calculo = sorted(
+        ofertas_volta,
+        key=lambda oferta: oferta["preco"],
+    )[:max_ofertas_por_trecho]
+
+    combinacoes = []
+
+    for ida, volta in itertools.product(idas_para_calculo, voltas_para_calculo):
+        combinacoes.append(
+            {
+                "ida": ida,
+                "volta": volta,
+                "preco_total": ida["preco"] + volta["preco"],
+            }
+        )
+
+    combinacoes.sort(key=lambda combinacao: combinacao["preco_total"])
+
+    return combinacoes[:top_n]
+
+
+def rotulo_tipo_preco(numero_passageiros):
+    """
+    A SerpApi normalmente devolve o preço conforme os passageiros
+    enviados na consulta. Como isso pode variar dependendo do retorno
+    do Google Flights, o app deixa o número de passageiros explícito.
+    """
+    if numero_passageiros == 1:
+        return "Consulta para 1 passageiro"
+
+    return f"Consulta para {numero_passageiros} passageiros"
+
+
+# ============================================================
+# RECOMENDAÇÃO CASH VS. MILHAS (PREPARAÇÃO)
 # ============================================================
 ESTADOS_RECOMENDACAO = {
     "milhas": {
-        "emoji": "✨",
-        "rotulo": "VALE EMITIR COM MILHAS",
-        "cor": "success",
-        "explicacao": (
-            "A emissão em milhas oferece o melhor custo-benefício para esta rota. "
-            "Verifique a disponibilidade de assentos no programa indicado."
+        "titulo": "✨ VALE EMITIR COM MILHAS",
+        "tipo": "success",
+        "texto": (
+            "A emissão em milhas oferece melhor custo-benefício nesta rota. "
+            "Verifique disponibilidade antes de transferir pontos."
         ),
     },
     "dinheiro": {
-        "emoji": "💸",
-        "rotulo": "MELHOR PAGAR EM DINHEIRO",
-        "cor": "warning",
-        "explicacao": (
-            "O valor da milha nesta rota está baixo. "
-            "Pagar em dinheiro preserva seus pontos para oportunidades melhores."
+        "titulo": "💸 MELHOR PAGAR EM DINHEIRO",
+        "tipo": "warning",
+        "texto": (
+            "O preço em dinheiro está competitivo para esta rota. "
+            "Preserve suas milhas para uma oportunidade com valor melhor."
         ),
     },
     "aguardar": {
-        "emoji": "⏳",
-        "rotulo": "AGUARDAR TRANSFERÊNCIA BONIFICADA OU ALERTA DE DISPONIBILIDADE",
-        "cor": "info",
-        "explicacao": (
-            "Nenhum dos lados está claramente vantajoso agora. "
-            "Recomendado aguardar bônus de transferência de pontos ou alerta de "
-            "disponibilidade de assentos em classe premium."
+        "titulo": "⏳ AGUARDAR OPORTUNIDADE OU BÔNUS DE TRANSFERÊNCIA",
+        "tipo": "info",
+        "texto": (
+            "A camada de milhas ainda não está conectada. "
+            "Quando integrarmos programas e disponibilidade award, o sistema "
+            "indicará automaticamente se vale pagar em dinheiro ou emitir."
         ),
     },
 }
 
 
-def exibir_recomendacao(estado, detalhe_extra=None):
-    """Exibe o card de recomendação na UI."""
-    cfg = ESTADOS_RECOMENDACAO.get(estado, ESTADOS_RECOMENDACAO["aguardar"])
-    st.markdown(f"### {cfg['emoji']} Recomendação")
-    getattr(st, cfg["cor"])(f"**{cfg['rotulo']}**\n\n{cfg['explicacao']}")
-    if detalhe_extra:
-        st.markdown(detalhe_extra)
+def exibir_recomendacao(estado="aguardar"):
+    configuracao = ESTADOS_RECOMENDACAO[estado]
+
+    st.markdown("## 💡 Recomendação Cash vs. Milhas")
+    getattr(st, configuracao["tipo"])(
+        f"**{configuracao['titulo']}**\n\n{configuracao['texto']}"
+    )
+
+
+# ============================================================
+# COMPONENTES DE EXIBIÇÃO
+# ============================================================
+def exibir_card_ida(oferta, data_ida_texto, passageiros, link_google):
+    """Exibe card de oferta somente ida."""
+    tag = (
+        "🏆 MENOR TARIFA GOOGLE"
+        if oferta["indice"] == 0
+        else "✅ OPORTUNIDADE ENCONTRADA"
+    )
+
+    st.markdown(
+        f"""
+        ### ✈️ {oferta["cia"]}
+        <span style="
+            background-color:#d4edda;
+            color:#155724;
+            padding:3px 8px;
+            border-radius:5px;
+            font-size:12px;
+        ">
+            {tag}
+        </span>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    coluna_voo, coluna_preco, coluna_botao = st.columns([4, 4, 3])
+
+    with coluna_voo:
+        numero = f" • Voo {oferta['num_voo']}" if oferta["num_voo"] else ""
+
+        st.info(
+            f"**✈️ IDA ({data_ida_texto})**{numero}\n\n"
+            f"**{oferta['dep_iata']}** ({oferta['dep_time']}) → "
+            f"**{oferta['arr_iata']}** ({oferta['arr_time']})\n\n"
+            f"⏱️ Duração: {oferta['duracao_fmt']} | "
+            f"Escalas: {oferta['escalas']}"
+        )
+
+    with coluna_preco:
+        st.warning(
+            f"**TARIFA DE REFERÊNCIA**\n\n"
+            f"### {formatar_valor_brl(oferta['preco'])}\n"
+            f"{rotulo_tipo_preco(passageiros)}\n\n"
+            f"Fonte: Google Flights"
+        )
+
+    with coluna_botao:
+        st.write("")
+        st.write("")
+        st.link_button(
+            "Ver no Google Flights 🔗",
+            link_google,
+            use_container_width=True,
+        )
+
+    st.divider()
+
+
+def exibir_card_combinacao(
+    combinacao,
+    indice,
+    data_ida_texto,
+    data_volta_texto,
+    passageiros,
+    link_google,
+):
+    """Exibe uma combinação de ida e volta da Estratégia A."""
+    ida = combinacao["ida"]
+    volta = combinacao["volta"]
+    preco_total = combinacao["preco_total"]
+
+    tag = (
+        "🏆 MELHOR COMBINAÇÃO REAL"
+        if indice == 0
+        else "✅ OPORTUNIDADE ENCONTRADA"
+    )
+
+    st.markdown(
+        f"""
+        ### ✈️ {ida["cia"]} / {volta["cia"]}
+        <span style="
+            background-color:#d4edda;
+            color:#155724;
+            padding:3px 8px;
+            border-radius:5px;
+            font-size:12px;
+        ">
+            {tag}
+        </span>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    coluna_ida, coluna_volta, coluna_total, coluna_botao = st.columns([3, 3, 3, 2])
+
+    with coluna_ida:
+        numero_ida = f" • Voo {ida['num_voo']}" if ida["num_voo"] else ""
+
+        st.info(
+            f"**✈️ IDA ({data_ida_texto})**{numero_ida}\n\n"
+            f"**{ida['dep_iata']}** ({ida['dep_time']}) → "
+            f"**{ida['arr_iata']}** ({ida['arr_time']})\n\n"
+            f"⏱️ {ida['duracao_fmt']} | {ida['escalas']} escala(s)\n\n"
+            f"Preço da ida: **{formatar_valor_brl(ida['preco'])}**"
+        )
+
+    with coluna_volta:
+        numero_volta = f" • Voo {volta['num_voo']}" if volta["num_voo"] else ""
+
+        st.info(
+            f"**✈️ VOLTA ({data_volta_texto})**{numero_volta}\n\n"
+            f"**{volta['dep_iata']}** ({volta['dep_time']}) → "
+            f"**{volta['arr_iata']}** ({volta['arr_time']})\n\n"
+            f"⏱️ {volta['duracao_fmt']} | {volta['escalas']} escala(s)\n\n"
+            f"Preço da volta: **{formatar_valor_brl(volta['preco'])}**"
+        )
+
+    with coluna_total:
+        st.warning(
+            f"**TARIFA TOTAL COMBINADA**\n\n"
+            f"### {formatar_valor_brl(preco_total)}\n"
+            f"{rotulo_tipo_preco(passageiros)}\n\n"
+            f"Fonte: Google Flights\n"
+            f"Soma de ida + volta separadas"
+        )
+
+    with coluna_botao:
+        st.write("")
+        st.write("")
+        st.link_button(
+            "Ver no Google Flights 🔗",
+            link_google,
+            use_container_width=True,
+        )
+
+    st.divider()
+
+
+def exibir_card_round_trip(
+    oferta,
+    indice,
+    passageiros,
+    link_google,
+):
+    """Exibe oferta da Estratégia B: ida e volta unificada."""
+    tag = (
+        "🏆 MELHOR TARIFA ROUND-TRIP"
+        if indice == 0
+        else "✅ OPORTUNIDADE ENCONTRADA"
+    )
+
+    st.markdown(
+        f"""
+        ### ✈️ {oferta["cia"]}
+        <span style="
+            background-color:#cce5ff;
+            color:#004085;
+            padding:3px 8px;
+            border-radius:5px;
+            font-size:12px;
+        ">
+            {tag}
+        </span>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    coluna_voo, coluna_preco, coluna_botao = st.columns([4, 4, 3])
+
+    with coluna_voo:
+        numero = f" • Voo {oferta['num_voo']}" if oferta["num_voo"] else ""
+
+        st.info(
+            f"**✈️ IDA + VOLTA (tarifa única)**{numero}\n\n"
+            f"Trecho de ida: **{oferta['dep_iata']}** ({oferta['dep_time']}) → "
+            f"**{oferta['arr_iata']}** ({oferta['arr_time']})\n\n"
+            f"⏱️ Duração da ida: {oferta['duracao_fmt']} | "
+            f"Escalas: {oferta['escalas']}"
+        )
+
+    with coluna_preco:
+        st.warning(
+            f"**TARIFA ROUND-TRIP ÚNICA**\n\n"
+            f"### {formatar_valor_brl(oferta['preco'])}\n"
+            f"{rotulo_tipo_preco(passageiros)}\n\n"
+            f"Tarifa ida + volta já combinada.\n"
+            f"Fonte: Google Flights"
+        )
+
+    with coluna_botao:
+        st.write("")
+        st.write("")
+        st.link_button(
+            "Ver no Google Flights 🔗",
+            link_google,
+            use_container_width=True,
+        )
+
+    st.divider()
 
 
 # ============================================================
 # EXECUÇÃO DA BUSCA
 # ============================================================
-if st.button("🔍 Buscar melhores ofertas no Google Flights", use_container_width=True):
+if st.button(
+    "🔍 Buscar melhores ofertas no Google Flights",
+    use_container_width=True,
+):
     if not SERPAPI_KEY:
-        st.error("Chave SERPAPI_KEY não configurada nos Secrets do Streamlit.")
+        st.error(
+            "A chave `SERPAPI_KEY` não está configurada nos Secrets do Streamlit."
+        )
+
+    elif origem_iata == destino_iata:
+        st.error("Origem e destino não podem ser iguais.")
+
+    elif tipo_viagem == "Ida e Volta" and data_volta <= data_ida:
+        st.error("A data de volta deve ser posterior à data de ida.")
+
     else:
         st.divider()
 
-        data_br_ida = data_ida.strftime("%d/%m/%Y")
-        data_iso_ida = data_ida.strftime("%Y-%m-%d")
+        data_ida_texto = data_ida.strftime("%d/%m/%Y")
+        data_volta_texto = (
+            data_volta.strftime("%d/%m/%Y")
+            if data_volta
+            else ""
+        )
+
         titulo = (
             f"📍 Busca real de {origem_iata} para {destino_iata} "
-            f"({data_br_ida}) — classe {classe_cabine}"
+            f"({data_ida_texto}) — classe {classe_cabine}"
         )
-        if tipo_viagem == "Ida e Volta" and data_volta:
-            titulo += f" | Volta: {data_volta.strftime('%d/%m/%Y')}"
+
+        if data_volta:
+            titulo += f" | Volta: {data_volta_texto}"
+
         st.subheader(titulo)
 
         ofertas_ida = []
         ofertas_volta = []
-        ofertas_ida_volta = []
+        ofertas_round_trip = []
+
         erro_ida = None
         erro_volta = None
-        erro_rt = None
+        erro_round_trip = None
 
-        with st.spinner("Consultando Google Flights (Estratégia A: trechos separados)..."):
-            raw_ida, erro_ida = buscar_serpapi_oneway(
-                origem_iata, destino_iata, data_ida, num_pax, classe_cabine
+        # ====================================================
+        # ESTRATÉGIA A — TRECHOS SEPARADOS
+        # ====================================================
+        with st.spinner(
+            "Consultando Google Flights — Estratégia A: trechos separados..."
+        ):
+            resultado_ida, erro_ida = buscar_ida(
+                origem_iata,
+                destino_iata,
+                data_ida,
+                numero_passageiros,
+                classe_cabine,
             )
-            for i, opt in enumerate(raw_ida):
-                n = normalizar_oferta_serp(opt, "ida", "A_separado", i)
-                if n:
-                    ofertas_ida.append(n)
+
+            for indice, oferta_bruta in enumerate(resultado_ida):
+                oferta_normalizada = normalizar_oferta_serpapi(
+                    oferta_bruta,
+                    trecho="ida",
+                    estrategia="A_separado",
+                    indice=indice,
+                )
+
+                if oferta_normalizada:
+                    ofertas_ida.append(oferta_normalizada)
 
             if tipo_viagem == "Ida e Volta" and data_volta:
-                raw_volta, erro_volta = buscar_serpapi_oneway(
-                    destino_iata, origem_iata, data_volta, num_pax, classe_cabine
+                resultado_volta, erro_volta = buscar_ida(
+                    destino_iata,
+                    origem_iata,
+                    data_volta,
+                    numero_passageiros,
+                    classe_cabine,
                 )
-                for i, opt in enumerate(raw_volta):
-                    n = normalizar_oferta_serp(opt, "volta", "A_separado", i)
-                    if n:
-                        ofertas_volta.append(n)
 
+                for indice, oferta_bruta in enumerate(resultado_volta):
+                    oferta_normalizada = normalizar_oferta_serpapi(
+                        oferta_bruta,
+                        trecho="volta",
+                        estrategia="A_separado",
+                        indice=indice,
+                    )
+
+                    if oferta_normalizada:
+                        ofertas_volta.append(oferta_normalizada)
+
+        # ====================================================
+        # ESTRATÉGIA B — IDA E VOLTA UNIFICADA
+        # ====================================================
         if tipo_viagem == "Ida e Volta" and data_volta:
-            with st.spinner("Consultando Google Flights (Estratégia B: ida e volta unificada)..."):
-                raw_rt, erro_rt = buscar_serpapi_roundtrip(
-                    origem_iata, destino_iata, data_ida, data_volta, num_pax, classe_cabine
+            with st.spinner(
+                "Consultando Google Flights — Estratégia B: ida e volta unificada..."
+            ):
+                resultado_round_trip, erro_round_trip = buscar_ida_volta_unificada(
+                    origem_iata,
+                    destino_iata,
+                    data_ida,
+                    data_volta,
+                    numero_passageiros,
+                    classe_cabine,
                 )
-                for i, opt in enumerate(raw_rt):
-                    n = normalizar_oferta_serp(opt, "ida_volta", "B_unificado", i)
-                    if n:
-                        ofertas_ida_volta.append(n)
 
-        # Diagnóstico: mostra o motivo real se a SerpApi falhar
-        erros_busca = [
-            ("Ida", erro_ida),
-            ("Volta", erro_volta),
-            ("Ida e volta unificada", erro_rt),
+                for indice, oferta_bruta in enumerate(resultado_round_trip):
+                    oferta_normalizada = normalizar_oferta_serpapi(
+                        oferta_bruta,
+                        trecho="ida_volta",
+                        estrategia="B_unificado",
+                        indice=indice,
+                    )
+
+                    if oferta_normalizada:
+                        ofertas_round_trip.append(oferta_normalizada)
+
+        # ====================================================
+        # ERROS / DIAGNÓSTICO
+        # ====================================================
+        erros = [
+            ("Busca de ida", erro_ida),
+            ("Busca de volta", erro_volta),
+            ("Busca ida e volta unificada", erro_round_trip),
         ]
-        for nome_busca, erro in erros_busca:
-            if erro:
-                st.warning(f"**{nome_busca}:** {erro}")
 
-        # Resumo das buscas
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.success(f"Estratégia A — Ida: {len(ofertas_ida)} opções")
-        with c2:
-            if tipo_viagem == "Ida e Volta" and data_volta:
-                st.info(f"Estratégia A — Volta: {len(ofertas_volta)} opções")
+        for descricao, erro in erros:
+            if erro:
+                st.warning(f"**{descricao}:** {erro}")
+
+        # ====================================================
+        # RESUMO
+        # ====================================================
+        col_resumo_1, col_resumo_2, col_resumo_3 = st.columns(3)
+
+        with col_resumo_1:
+            st.success(
+                f"Estratégia A — Ida: {len(ofertas_ida)} opções"
+            )
+
+        with col_resumo_2:
+            if tipo_viagem == "Ida e Volta":
+                st.info(
+                    f"Estratégia A — Volta: {len(ofertas_volta)} opções"
+                )
             else:
                 st.info("Estratégia A — Volta: n/a (somente ida)")
-        with c3:
-            if tipo_viagem == "Ida e Volta" and data_volta:
-                st.warning(f"Estratégia B — Round-trip único: {len(ofertas_ida_volta)} opções")
+
+        with col_resumo_3:
+            if tipo_viagem == "Ida e Volta":
+                st.warning(
+                    f"Estratégia B — Round-trip único: "
+                    f"{len(ofertas_round_trip)} opções"
+                )
             else:
                 st.info("Estratégia B — n/a (somente ida)")
 
         st.write("")
 
-        if not ofertas_ida and not ofertas_ida_volta:
-            st.warning("Nenhum voo encontrado no Google Flights para os parâmetros informados.")
-            st.info(
-                "Checklist rápido:\n"
-                "1. Confirme se `SERPAPI_KEY` está nos Secrets do Streamlit.\n"
-                "2. Confirme se a conta SerpApi tem créditos e o engine Google Flights liberado.\n"
-                "3. Tente uma data mais próxima (ex.: daqui 14–30 dias).\n"
-                "4. Teste também origem SAO / destino RIO (multi-aeroporto)."
+        # ====================================================
+        # NENHUM RESULTADO
+        # ====================================================
+        if not ofertas_ida and not ofertas_round_trip:
+            st.warning(
+                "Nenhum voo encontrado no Google Flights para os parâmetros informados."
             )
-        else:
-            # ---- Bloco 1: Estratégia A ----
-            if ofertas_ida:
-                st.markdown("## 🧭 Estratégia A — Trechos separados (Google Flights)")
 
-                if tipo_viagem == "Somente Ida":
-                    for o in ofertas_ida[:5]:
-                        tag = "🏆 MENOR TARIFA GOOGLE" if o["indice"] == 0 else "✅ OPORTUNIDADE VALIDADA"
-                        st.markdown(
-                            f"### ✈️ {o['cia']}  "
-                            f"<span style='background-color:#d4edda; color:#155724; "
-                            f"padding:3px 8px; border-radius:5px; font-size:12px;'>{tag}</span>",
-                            unsafe_allow_html=True,
-                        )
-                        ca, cb, cc = st.columns([4, 4, 3])
-                        with ca:
-                            txt_voo = f" • Voo {o['num_voo']}" if o["num_voo"] else ""
-                            st.info(
-                                f"**✈️ IDA ({data_br_ida})**{txt_voo}\n\n"
-                                f"**{o['dep_iata']}** ({o['dep_time']}) → "
-                                f"**{o['arr_iata']}** ({o['arr_time']})\n\n"
-                                f"⏱️ Duração: {o['duracao_fmt']} | Escalas: {o['escalas']}"
-                            )
-                        with cb:
-                            st.warning(
-                                f"**TARIFA DE REFERÊNCIA**\n\n"
-                                f"### R$ {o['preco']:,.2f}\n"
-                                f"Fonte: Google Flights ({o['tipo_token']})"
-                            )
-                        with cc:
-                            st.write("")
-                            st.write("")
-                            link = (
-                                f"https://www.google.com/travel/flights"
-                                f"?q=Flights%20to%20{destino_iata}%20from%20{origem_iata}%20on%20{data_iso_ida}"
-                            )
-                            st.link_button("Comprar Voo 🔗", link, use_container_width=True)
-                        st.divider()
+            st.info(
+                """
+                **Checklist rápido**
 
-                if tipo_viagem == "Ida e Volta" and data_volta and ofertas_volta:
-                    data_br_volta = data_volta.strftime("%d/%m/%Y")
-                    data_iso_volta = data_volta.strftime("%Y-%m-%d")
-                    qtd = min(len(ofertas_ida), len(ofertas_volta), 5)
-                    for i in range(qtd):
-                        oi = ofertas_ida[i]
-                        ov = ofertas_volta[i]
-                        preco_total = oi["preco"] + ov["preco"]
-                        tag = "🏆 MELHOR COMBINAÇÃO GOOGLE" if i == 0 else "✅ OPORTUNIDADE VALIDADA"
-                        st.markdown(
-                            f"### ✈️ {oi['cia']} / {ov['cia']}  "
-                            f"<span style='background-color:#d4edda; color:#155724; "
-                            f"padding:3px 8px; border-radius:5px; font-size:12px;'>{tag}</span>",
-                            unsafe_allow_html=True,
-                        )
-                        ca, cb, cc, cd = st.columns([3, 3, 3, 2])
-                        with ca:
-                            txt_i = f" • Voo {oi['num_voo']}" if oi["num_voo"] else ""
-                            st.info(
-                                f"**✈️ IDA ({data_br_ida})**{txt_i}\n\n"
-                                f"**{oi['dep_iata']}** ({oi['dep_time']}) → "
-                                f"**{oi['arr_iata']}** ({oi['arr_time']})"
-                            )
-                        with cb:
-                            txt_v = f" • Voo {ov['num_voo']}" if ov["num_voo"] else ""
-                            st.info(
-                                f"**✈️ VOLTA ({data_br_volta})**{txt_v}\n\n"
-                                f"**{ov['dep_iata']}** ({ov['dep_time']}) → "
-                                f"**{ov['arr_iata']}** ({ov['arr_time']})"
-                            )
-                        with cc:
-                            st.warning(
-                                f"**TARIFA TOTAL COMBINADA**\n\n"
-                                f"### R$ {preco_total:,.2f}\n"
-                                f"Fonte: Google Flights (soma de trechos)"
-                            )
-                        with cd:
-                            st.write("")
-                            st.write("")
-                            link = (
-                                f"https://www.google.com/travel/flights"
-                                f"?q=Flights%20to%20{destino_iata}%20from%20{origem_iata}"
-                                f"%20on%20{data_iso_ida}%20through%20{data_iso_volta}"
-                            )
-                            st.link_button("Comprar Voo 🔗", link, use_container_width=True)
-                        st.divider()
+                1. Confirme que a `SERPAPI_KEY` está configurada;
+                2. Confira se sua conta SerpApi possui créditos;
+                3. Teste uma data entre 15 e 60 dias à frente;
+                4. Teste aeroportos agregados, como SAO e RIO;
+                5. Tente a mesma rota diretamente no Google Flights.
+                """
+            )
 
-            # ---- Bloco 2: Estratégia B ----
-            if ofertas_ida_volta:
-                st.write("")
-                st.markdown("## 🎟️ Estratégia B — Ida e volta unificada (Google Flights)")
-                st.caption(
-                    "Esta busca pede a tarifa de round-trip em uma única consulta ao Google Flights. "
-                    "Capta casos em que a tarifa de ida+volta sai mais barata comprada junta (ex.: LATAM)."
+        # ====================================================
+        # ESTRATÉGIA A — SOMENTE IDA
+        # ====================================================
+        if tipo_viagem == "Somente Ida" and ofertas_ida:
+            st.markdown("## 🧭 Estratégia A — Trechos separados")
+
+            ofertas_ida_ordenadas = sorted(
+                ofertas_ida,
+                key=lambda oferta: oferta["preco"],
+            )
+
+            link_google = gerar_link_google_flights(
+                origem_iata,
+                destino_iata,
+                data_ida,
+            )
+
+            for indice, oferta in enumerate(ofertas_ida_ordenadas[:5]):
+                oferta["indice"] = indice
+
+                exibir_card_ida(
+                    oferta,
+                    data_ida_texto,
+                    numero_passageiros,
+                    link_google,
                 )
 
-                for o in ofertas_ida_volta[:5]:
-                    tag = "🏆 MELHOR TARIFA ROUND-TRIP" if o["indice"] == 0 else "✅ OPORTUNIDADE VALIDADA"
-                    st.markdown(
-                        f"### ✈️ {o['cia']}  "
-                        f"<span style='background-color:#cce5ff; color:#004085; "
-                        f"padding:3px 8px; border-radius:5px; font-size:12px;'>{tag}</span>",
-                        unsafe_allow_html=True,
-                    )
-                    ca, cb, cc = st.columns([4, 4, 3])
-                    with ca:
-                        txt_voo = f" • Voo {o['num_voo']}" if o["num_voo"] else ""
-                        st.info(
-                            f"**✈️ IDA + VOLTA**{txt_voo}\n\n"
-                            f"**{o['dep_iata']}** ({o['dep_time']}) → "
-                            f"**{o['arr_iata']}** ({o['arr_time']})\n\n"
-                            f"⏱️ Duração total ida: {o['duracao_fmt']} | Escalas: {o['escalas']}"
-                        )
-                    with cb:
-                        st.warning(
-                            f"**TARIFA ROUND-TRIP**\n\n"
-                            f"### R$ {o['preco']:,.2f}\n"
-                            f"Fonte: Google Flights ({o['tipo_token']})"
-                        )
-                    with cc:
-                        st.write("")
-                        st.write("")
-                        link = (
-                            f"https://www.google.com/travel/flights"
-                            f"?q=Flights%20to%20{destino_iata}%20from%20{origem_iata}"
-                            f"%20on%20{data_iso_ida}%20through%20{data_volta.strftime('%Y-%m-%d')}"
-                        )
-                        st.link_button("Comprar Voo 🔗", link, use_container_width=True)
-                    st.divider()
+        # ====================================================
+        # ESTRATÉGIA A — IDA E VOLTA COMBINADAS
+        # ====================================================
+        melhores_combinacoes = []
 
-            # ---- Recomendação (framework) ----
-            st.write("")
-            st.markdown("## 💡 Recomendação Cash vs Milhas")
+        if (
+            tipo_viagem == "Ida e Volta"
+            and ofertas_ida
+            and ofertas_volta
+        ):
+            st.markdown("## 🧭 Estratégia A — Trechos separados")
+
             st.caption(
-                "Framework de decisão montado. A lógica que compara valor de milha será "
-                "ativada no próximo passo, quando integrarmos a API de passagens em milhas."
+                "As opções abaixo testam combinações entre voos de ida e de volta "
+                "e são ordenadas pelo menor preço total. "
+                "Não é apenas uma soma de ofertas com o mesmo índice."
             )
 
-            todas_cash = [o["preco"] for o in ofertas_ida if o.get("preco")]
-            if tipo_viagem == "Ida e Volta" and ofertas_ida and ofertas_volta:
-                todas_cash.append(ofertas_ida[0]["preco"] + ofertas_volta[0]["preco"])
-            if ofertas_ida_volta:
-                todas_cash += [o["preco"] for o in ofertas_ida_volta if o.get("preco")]
-            if todas_cash:
-                melhor_cash = min(todas_cash)
-                st.info(f"**Melhor tarifa em dinheiro encontrada:** R$ {melhor_cash:,.2f}")
-
-            exibir_recomendacao(
-                "aguardar",
-                detalhe_extra=(
-                    "_Lado milhas ainda não conectado._ "
-                    "No próximo passo vamos integrar a API de milhas para calcular "
-                    "os centavos por milha e decidir automaticamente entre os três estados."
-                ),
+            melhores_combinacoes = gerar_combinacoes_ida_volta(
+                ofertas_ida,
+                ofertas_volta,
+                top_n=5,
+                max_ofertas_por_trecho=8,
             )
+
+            link_google = gerar_link_google_flights(
+                origem_iata,
+                destino_iata,
+                data_ida,
+                data_volta,
+            )
+
+            for indice, combinacao in enumerate(melhores_combinacoes):
+                exibir_card_combinacao(
+                    combinacao,
+                    indice,
+                    data_ida_texto,
+                    data_volta_texto,
+                    numero_passageiros,
+                    link_google,
+                )
+
+        # ====================================================
+        # ESTRATÉGIA B — TARIFA ROUND-TRIP UNIFICADA
+        # ====================================================
+        if tipo_viagem == "Ida e Volta" and ofertas_round_trip:
+            st.markdown("## 🎟️ Estratégia B — Ida e volta unificada")
+
+            st.caption(
+                "Nesta estratégia, o Google Flights consulta uma tarifa de ida e volta "
+                "emitida conjuntamente. Esse valor já representa a viagem completa "
+                "e não deve ser somado a outro trecho."
+            )
+
+            ofertas_round_trip_ordenadas = sorted(
+                ofertas_round_trip,
+                key=lambda oferta: oferta["preco"],
+            )
+
+            link_google = gerar_link_google_flights(
+                origem_iata,
+                destino_iata,
+                data_ida,
+                data_volta,
+            )
+
+            for indice, oferta in enumerate(ofertas_round_trip_ordenadas[:5]):
+                exibir_card_round_trip(
+                    oferta,
+                    indice,
+                    numero_passageiros,
+                    link_google,
+                )
+
+        # ====================================================
+        # COMPARATIVO A VS B
+        # ====================================================
+        if tipo_viagem == "Ida e Volta":
+            melhor_preco_a = None
+            melhor_preco_b = None
+
+            if melhores_combinacoes:
+                melhor_preco_a = melhores_combinacoes[0]["preco_total"]
+
+            if ofertas_round_trip:
+                melhor_preco_b = min(
+                    oferta["preco"] for oferta in ofertas_round_trip
+                )
+
+            if melhor_preco_a is not None or melhor_preco_b is not None:
+                st.markdown(
+                    "## ⚖️ Comparativo: trechos separados vs. tarifa unificada"
+                )
+
+                coluna_a, coluna_b = st.columns(2)
+
+                with coluna_a:
+                    if melhor_preco_a is not None:
+                        st.info(
+                            "**Melhor combinação separada (A)**\n\n"
+                            f"### {formatar_valor_brl(melhor_preco_a)}"
+                        )
+                    else:
+                        st.info("Nenhuma combinação válida encontrada na Estratégia A.")
+
+                with coluna_b:
+                    if melhor_preco_b is not None:
+                        st.info(
+                            "**Melhor tarifa ida e volta unificada (B)**\n\n"
+                            f"### {formatar_valor_brl(melhor_preco_b)}"
+                        )
+                    else:
+                        st.info("Nenhuma tarifa válida encontrada na Estratégia B.")
+
+                if melhor_preco_a is not None and melhor_preco_b is not None:
+                    diferenca = abs(melhor_preco_a - melhor_preco_b)
+
+                    if melhor_preco_a < melhor_preco_b:
+                        st.success(
+                            "✅ **Trechos separados são mais baratos nesta busca.**\n\n"
+                            f"Economia estimada: {formatar_valor_brl(diferenca)}."
+                        )
+
+                    elif melhor_preco_b < melhor_preco_a:
+                        st.success(
+                            "✅ **A tarifa ida e volta unificada é mais barata nesta busca.**\n\n"
+                            f"Economia estimada: {formatar_valor_brl(diferenca)}."
+                        )
+
+                    else:
+                        st.info(
+                            "As duas estratégias retornaram o mesmo preço total."
+                        )
+
+        # ====================================================
+        # MELHOR TARIFA CASH
+        # ====================================================
+        precos_encontrados = []
+
+        if tipo_viagem == "Somente Ida":
+            precos_encontrados.extend(
+                oferta["preco"] for oferta in ofertas_ida
+            )
+
+        if melhores_combinacoes:
+            precos_encontrados.extend(
+                combinacao["preco_total"]
+                for combinacao in melhores_combinacoes
+            )
+
+        if ofertas_round_trip:
+            precos_encontrados.extend(
+                oferta["preco"]
+                for oferta in ofertas_round_trip
+            )
+
+        if precos_encontrados:
+            melhor_cash = min(precos_encontrados)
+
+            st.info(
+                f"💰 **Melhor tarifa em dinheiro encontrada:** "
+                f"{formatar_valor_brl(melhor_cash)}"
+            )
+
+        # ====================================================
+        # PRÓXIMA ETAPA: MILHAS
+        # ====================================================
+        exibir_recomendacao("aguardar")
